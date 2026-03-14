@@ -125,7 +125,7 @@ export default function RoditeljPage() {
                   <div>
                     <p className="font-bold text-gray-800">{grade.subject}</p>
                     <p className="text-sm text-gray-500">{grade.element}</p>
-                    {grade.note && <p className="text-xs text-gray-400 mt-1 italic">"{grade.note}"</p>}
+                    {grade.note && <p className="text-xs text-gray-400 mt-1 italic">&quot;{grade.note}&quot;</p>}
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="text-sm text-gray-500">{new Date(grade.date_created).toLocaleDateString('hr-HR')}</span>

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, Edit2, Users, Plus, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Edit2, Users, Plus, X, Trash2 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 interface WorkWeek {
   id: string;
@@ -25,6 +26,10 @@ interface Lesson {
   subject: string;
   content: string;
   teacher: string;
+  group: string;
+  note: string;
+  isBlock?: boolean;
+  blockId?: string;
 }
 
 export default function DnevnikRadaPage() {
@@ -33,6 +38,8 @@ export default function DnevnikRadaPage() {
   const [selectedDay, setSelectedDay] = useState<WorkDay | null>(null);
   const [showAddWeekModal, setShowAddWeekModal] = useState(false);
   const [showAddLessonModal, setShowAddLessonModal] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [teacherSubjects, setTeacherSubjects] = useState<any[]>([]);
 
   // New week state
   const [newWeekDate, setNewWeekDate] = useState(new Date().toISOString().split('T')[0]);
@@ -40,10 +47,36 @@ export default function DnevnikRadaPage() {
 
   // New lesson state
   const [lessonNumber, setLessonNumber] = useState(1);
-  const [lessonSubject, setLessonSubject] = useState('Hrvatski jezik');
+  const [lessonSubject, setLessonSubject] = useState('');
   const [lessonContent, setLessonContent] = useState('');
+  const [lessonGroup, setLessonGroup] = useState('Cijeli razred');
+  const [lessonBlockHours, setLessonBlockHours] = useState(1);
+  const [lessonNote, setLessonNote] = useState('');
 
   useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser) {
+        const { data } = await supabase.from('users').select('*').eq('email', authUser.email).single();
+        setUser(data);
+        
+        // Load teacher subjects
+        if (data) {
+          const localSubjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
+          const localSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
+          const assignedSubjectIds = localSubjectTeachers
+            .filter((st: any) => st.teacher_id === data.id)
+            .map((st: any) => st.subject_id);
+          
+          const assignedSubjects = localSubjects.filter((s: any) => assignedSubjectIds.includes(s.id));
+          setTeacherSubjects(assignedSubjects);
+          if (assignedSubjects.length > 0) {
+            setLessonSubject(assignedSubjects[0].name);
+          }
+        }
+      }
+    };
+    fetchUser();
     // Load from localStorage or set initial mock
     const saved = localStorage.getItem('dnevnik_weeks');
     if (saved) {
@@ -104,13 +137,22 @@ export default function DnevnikRadaPage() {
   const handleAddLesson = () => {
     if (!selectedWeek || !selectedDay) return;
 
-    const newLesson: Lesson = {
-      id: Date.now().toString(),
-      number: lessonNumber,
-      subject: lessonSubject,
-      content: lessonContent,
-      teacher: 'M. Jurić'
-    };
+    const blockId = Date.now().toString();
+    const newLessons: Lesson[] = [];
+
+    for (let i = 0; i < lessonBlockHours; i++) {
+      newLessons.push({
+        id: `${blockId}-${i}`,
+        number: lessonNumber + i,
+        subject: lessonSubject,
+        content: lessonContent,
+        teacher: user?.email || 'Nastavnik',
+        group: lessonGroup,
+        note: lessonNote,
+        isBlock: lessonBlockHours > 1,
+        blockId: lessonBlockHours > 1 ? blockId : undefined
+      });
+    }
 
     const updatedWeeks = weeks.map(w => {
       if (w.id === selectedWeek.id) {
@@ -118,7 +160,13 @@ export default function DnevnikRadaPage() {
           ...w,
           days: w.days.map(d => {
             if (d.date === selectedDay.date) {
-              return { ...d, lessons: [...d.lessons, newLesson].sort((a, b) => a.number - b.number) };
+              // Remove existing lessons with same numbers if any
+              const existingNumbers = newLessons.map(nl => nl.number);
+              const filteredLessons = d.lessons.filter(l => !existingNumbers.includes(l.number));
+              return { 
+                ...d, 
+                lessons: [...filteredLessons, ...newLessons].sort((a, b) => a.number - b.number) 
+              };
             }
             return d;
           })
@@ -139,6 +187,36 @@ export default function DnevnikRadaPage() {
     
     setShowAddLessonModal(false);
     setLessonContent('');
+    setLessonNote('');
+    setLessonBlockHours(1);
+  };
+
+  const handleDeleteLesson = (lessonId: string) => {
+    if (!selectedWeek || !selectedDay) return;
+    if (!window.confirm('Jeste li sigurni da želite obrisati ovaj sat?')) return;
+
+    const updatedWeeks = weeks.map(w => {
+      if (w.id === selectedWeek.id) {
+        return {
+          ...w,
+          days: w.days.map(d => {
+            if (d.date === selectedDay.date) {
+              return { ...d, lessons: d.lessons.filter(l => l.id !== lessonId) };
+            }
+            return d;
+          })
+        };
+      }
+      return w;
+    });
+
+    saveWeeks(updatedWeeks);
+    const updatedWeek = updatedWeeks.find(w => w.id === selectedWeek.id);
+    if (updatedWeek) {
+      setSelectedWeek(updatedWeek);
+      const updatedDay = updatedWeek.days.find(d => d.date === selectedDay.date);
+      if (updatedDay) setSelectedDay(updatedDay);
+    }
   };
 
   return (
@@ -213,31 +291,61 @@ export default function DnevnikRadaPage() {
             </div>
           </div>
 
-          <table className="w-full text-sm">
+          <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="w-16 p-2 text-center font-normal text-gray-600">Sat</th>
-                <th className="p-2 text-left font-normal text-gray-600">Sadržaj nastavnog sata</th>
+                <th className="w-16 p-2 text-center font-normal text-gray-600 border-r border-gray-200">Sat</th>
+                <th className="p-2 text-left font-normal text-gray-600 border-r border-gray-200">Sadržaj nastavnog sata</th>
+                <th className="w-48 p-2 text-left font-normal text-gray-600">Napomena</th>
               </tr>
             </thead>
             <tbody>
-              {selectedDay.lessons.length === 0 ? (
-                <tr>
-                  <td colSpan={2} className="p-8 text-center text-gray-500">Nema unesenih sati za ovaj dan.</td>
-                </tr>
-              ) : (
-                selectedDay.lessons.map(lesson => (
-                  <tr key={lesson.id} className="border-b border-gray-200 hover:bg-gray-50">
-                    <td className="p-3 text-center font-bold">{lesson.number}. sat</td>
-                    <td className="p-3">
-                      <div className="bg-red-50 border border-red-200 p-2">
-                        <div className="font-bold text-[#1a365d] mb-1">[{lesson.number}] {lesson.subject} - {lesson.teacher}</div>
-                        <div>{lesson.content}</div>
-                      </div>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map(num => {
+                const lesson = selectedDay.lessons.find(l => l.number === num);
+                return (
+                  <tr key={num} className="border-b border-gray-200 hover:bg-gray-50 min-h-[60px]">
+                    <td className="p-3 text-center font-bold border-r border-gray-200">{num}.</td>
+                    <td 
+                      className="p-3 border-r border-gray-200 cursor-pointer"
+                      onClick={() => {
+                        setLessonNumber(num);
+                        setShowAddLessonModal(true);
+                      }}
+                    >
+                      {lesson ? (
+                        <div className="relative group">
+                          <div className="bg-red-50 border border-red-200 p-2 rounded">
+                            <div className="flex justify-between items-start">
+                              <div className="font-bold text-[#1a365d] mb-1">
+                                {lesson.subject} ({lesson.group})
+                              </div>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteLesson(lesson.id);
+                                }}
+                                className="text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                            <div className="text-gray-700">{lesson.content}</div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-gray-300 italic">Kliknite za unos sata...</div>
+                      )}
+                    </td>
+                    <td className="p-3 align-top">
+                      {lesson?.note && (
+                        <div className="text-xs text-gray-600 bg-yellow-50 p-1 border border-yellow-100 rounded">
+                          {lesson.note}
+                        </div>
+                      )}
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -290,54 +398,104 @@ export default function DnevnikRadaPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white w-full max-w-2xl shadow-xl">
             <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
-              <h3 className="font-medium">Dodavanje novog zapisa</h3>
+              <h3 className="font-medium">Unos nastavnog sata</h3>
               <button onClick={() => setShowAddLessonModal(false)} className="text-white hover:text-gray-300"><X size={20} /></button>
             </div>
-            <div className="p-6 bg-red-50 m-4 border border-red-300">
-              <div className="flex items-center gap-4 mb-4">
-                <label className="w-32 text-sm font-bold text-right">Radni sat:</label>
-                <select 
-                  value={lessonNumber}
-                  onChange={(e) => setLessonNumber(Number(e.target.value))}
-                  className="border border-gray-300 p-1 w-20 bg-white"
-                >
-                  {[0, 1, 2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-                <span className="text-sm font-bold ml-4">Datum:</span>
-                <span className="text-sm">{new Date(selectedDay?.date || '').toLocaleDateString('hr-HR')}</span>
+            <div className="p-6">
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-bold mb-1">Sat:</label>
+                  <input 
+                    type="number" 
+                    value={lessonNumber}
+                    onChange={(e) => setLessonNumber(Number(e.target.value))}
+                    className="w-full border border-gray-300 p-2 bg-gray-100"
+                    readOnly
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold mb-1">Datum:</label>
+                  <div className="p-2 border border-gray-200 bg-gray-50 text-sm">
+                    {new Date(selectedDay?.date || '').toLocaleDateString('hr-HR')}
+                  </div>
+                </div>
               </div>
-              
-              <div className="flex items-center gap-4 mb-4">
-                <label className="w-32 text-sm font-bold text-right">Predmet:</label>
-                <select 
-                  value={lessonSubject}
-                  onChange={(e) => setLessonSubject(e.target.value)}
-                  className="border border-gray-300 p-1 flex-1 bg-white"
-                >
-                  <option value="Hrvatski jezik">Hrvatski jezik</option>
-                  <option value="Matematika">Matematika</option>
-                  <option value="Engleski jezik">Engleski jezik</option>
-                  <option value="Priroda i društvo">Priroda i društvo</option>
-                  <option value="Tjelesna i zdravstvena kultura">Tjelesna i zdravstvena kultura</option>
-                </select>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-bold mb-1">Predmet:</label>
+                  <select 
+                    value={lessonSubject}
+                    onChange={(e) => setLessonSubject(e.target.value)}
+                    className="w-full border border-gray-300 p-2 bg-white"
+                  >
+                    {teacherSubjects.length === 0 ? (
+                      <option value="">Nema dodijeljenih predmeta</option>
+                    ) : (
+                      teacherSubjects.map(s => <option key={s.id} value={s.name}>{s.name}</option>)
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold mb-1">Grupa:</label>
+                  <select 
+                    value={lessonGroup}
+                    onChange={(e) => setLessonGroup(e.target.value)}
+                    className="w-full border border-gray-300 p-2 bg-white"
+                  >
+                    <option value="Cijeli razred">Cijeli razred</option>
+                    <option value="A grupa">A grupa</option>
+                    <option value="B grupa">B grupa</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-bold mb-1">Blok sat (trajanje):</label>
+                  <select 
+                    value={lessonBlockHours}
+                    onChange={(e) => setLessonBlockHours(Number(e.target.value))}
+                    className="w-full border border-gray-300 p-2 bg-white"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n} sat/a</option>)}
+                  </select>
+                </div>
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-bold mb-1">Nastavna jedinica:</label>
+                <label className="block text-sm font-bold mb-1">Sadržaj nastavnog sata:</label>
                 <textarea 
                   value={lessonContent}
                   onChange={(e) => setLessonContent(e.target.value)}
                   className="w-full border border-gray-300 h-24 p-2 text-sm bg-white"
+                  placeholder="Unesite nastavnu jedinicu..."
                 ></textarea>
               </div>
 
-              <div className="flex justify-center mt-6">
+              <div className="mb-4">
+                <label className="block text-sm font-bold mb-1">Napomena:</label>
+                <textarea 
+                  value={lessonNote}
+                  onChange={(e) => setLessonNote(e.target.value)}
+                  className="w-full border border-gray-300 h-16 p-2 text-sm bg-white"
+                  placeholder="Opcionalna napomena..."
+                ></textarea>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6">
+                <button 
+                  onClick={() => setShowAddLessonModal(false)}
+                  className="px-4 py-2 border border-gray-300 hover:bg-gray-50"
+                >
+                  Odustani
+                </button>
                 <button 
                   onClick={handleAddLesson}
-                  disabled={!lessonContent}
+                  disabled={!lessonContent || !lessonSubject}
                   className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-8 py-2 disabled:opacity-50"
                 >
-                  Unesi
+                  Spremi
                 </button>
               </div>
             </div>

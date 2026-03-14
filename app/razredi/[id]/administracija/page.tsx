@@ -10,11 +10,13 @@ export default function AdministracijaPage() {
   const [students, setStudents] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<any>(null);
 
   // New user form state
   const [newEmail, setNewEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('student');
+  const [newFullName, setNewFullName] = useState('');
 
   // New student form state
   const [newStudentName, setNewStudentName] = useState('');
@@ -32,14 +34,40 @@ export default function AdministracijaPage() {
   const [newSubjectTeacherId, setNewSubjectTeacherId] = useState('');
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
 
+  // Schools and Academic Years
+  const [schools, setSchools] = useState<any[]>([]);
+  const [academicYears, setAcademicYears] = useState<any[]>([]);
+  const [classSubjects, setClassSubjects] = useState<any[]>([]);
+  const [newSchoolName, setNewSchoolName] = useState('');
+  const [newAcademicYearName, setNewAcademicYearName] = useState('');
+  const [selectedClassIdForSubjects, setSelectedClassIdForSubjects] = useState('');
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+
   const loadLocalData = () => {
     const localSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
     const localSubjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
+    const localSchools = JSON.parse(localStorage.getItem('demo_schools') || '[]');
+    const localAcademicYears = JSON.parse(localStorage.getItem('demo_academic_years') || '[]');
+    const localClassSubjects = JSON.parse(localStorage.getItem('demo_class_subjects') || '[]');
+    const localUserNames = JSON.parse(localStorage.getItem('demo_user_names') || '{}');
+    
     setSubjects(localSubjects);
     setSubjectTeachers(localSubjectTeachers);
+    setSchools(localSchools);
+    setAcademicYears(localAcademicYears);
+    setClassSubjects(localClassSubjects);
+    setUserNames(localUserNames);
   };
 
   useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('users').select('*').eq('email', user.email).single();
+        setUser(data);
+      }
+    };
+    fetchUser();
     loadLocalData();
   }, []);
 
@@ -87,14 +115,15 @@ export default function AdministracijaPage() {
   };
 
   const adminLinks = [
+    'Škole',
+    'Školske godine',
     'Korisnici',
     'Administracija predmeta',
     'Dodijeli nastavnicima predmete',
     'Razredni odjeli i grupe',
+    'Dodijeli predmete razredu',
     'Administracija učenika',
     'Prijenos učenika u viši razred',
-    'Grupna zamjena',
-    'Odaberi ravnatelja'
   ];
 
   const fetchUsers = async () => {
@@ -124,8 +153,11 @@ export default function AdministracijaPage() {
     } else if (activeTab === 'Administracija učenika') {
       fetchStudents();
       fetchClasses();
-    } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred') {
+    } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred' || activeTab === 'Dodijeli predmete razredu') {
       fetchClasses();
+      if (activeTab === 'Dodijeli predmete razredu') {
+        fetchUsers(); // To get teachers
+      }
     }
   }, [activeTab]);
 
@@ -148,9 +180,19 @@ export default function AdministracijaPage() {
     ]).select();
 
     if (!error && data) {
-      setUsers([...users, data[0]]);
+      const newUser = data[0];
+      setUsers([...users, newUser]);
+      
+      // Save full name to local storage
+      if (newFullName) {
+        const updatedNames = { ...userNames, [newUser.id]: newFullName };
+        setUserNames(updatedNames);
+        localStorage.setItem('demo_user_names', JSON.stringify(updatedNames));
+      }
+
       setNewEmail('');
       setNewPassword('');
+      setNewFullName('');
     } else {
       alert('Greška pri dodavanju korisnika.');
     }
@@ -279,6 +321,172 @@ export default function AdministracijaPage() {
     setLoading(false);
   };
 
+  const handleAddSchool = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSchoolName) return;
+    const newSchool = { id: Date.now().toString(), name: newSchoolName };
+    const updated = [...schools, newSchool];
+    setSchools(updated);
+    localStorage.setItem('demo_schools', JSON.stringify(updated));
+    setNewSchoolName('');
+  };
+
+  const handleAddAcademicYear = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAcademicYearName) return;
+    const newYear = { id: Date.now().toString(), name: newAcademicYearName };
+    const updated = [...academicYears, newYear];
+    setAcademicYears(updated);
+    localStorage.setItem('demo_academic_years', JSON.stringify(updated));
+    setNewAcademicYearName('');
+  };
+
+  const handleAssignSubjectToClass = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClassIdForSubjects || !selectedSubjectId || !newSubjectTeacherId) return;
+    
+    const newAssignment = {
+      id: Date.now().toString(),
+      class_id: selectedClassIdForSubjects,
+      subject_id: selectedSubjectId,
+      teacher_id: newSubjectTeacherId
+    };
+    const updated = [...classSubjects, newAssignment];
+    setClassSubjects(updated);
+    localStorage.setItem('demo_class_subjects', JSON.stringify(updated));
+    alert('Predmet i nastavnik uspješno dodijeljeni razredu.');
+  };
+
+  if (activeTab === 'Škole') {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={() => setActiveTab(null)} className="p-2 bg-gray-200 hover:bg-gray-300 rounded">
+            <ArrowLeft size={20} />
+          </button>
+          <h2 className="text-2xl text-gray-800">Upravljanje školama</h2>
+        </div>
+        <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
+          <h3 className="text-lg font-bold mb-4">Dodaj novu školu</h3>
+          <form onSubmit={handleAddSchool} className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">Naziv škole</label>
+              <input type="text" value={newSchoolName} onChange={(e) => setNewSchoolName(e.target.value)} className="w-full border border-gray-300 p-2" required />
+            </div>
+            <button type="submit" className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2"><Plus size={18} /> Dodaj</button>
+          </form>
+        </div>
+        <div className="bg-white border border-gray-200 shadow-sm">
+          {schools.map(s => (
+            <div key={s.id} className="p-4 border-b border-gray-100 flex justify-between items-center">
+              <span className="font-medium">{s.name}</span>
+              <button onClick={() => {
+                const updated = schools.filter(x => x.id !== s.id);
+                setSchools(updated);
+                localStorage.setItem('demo_schools', JSON.stringify(updated));
+              }} className="text-red-500"><Trash2 size={18} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === 'Školske godine') {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={() => setActiveTab(null)} className="p-2 bg-gray-200 hover:bg-gray-300 rounded">
+            <ArrowLeft size={20} />
+          </button>
+          <h2 className="text-2xl text-gray-800">Školske godine</h2>
+        </div>
+        <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
+          <h3 className="text-lg font-bold mb-4">Dodaj školsku godinu</h3>
+          <form onSubmit={handleAddAcademicYear} className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">Naziv (npr. 2023/2024)</label>
+              <input type="text" value={newAcademicYearName} onChange={(e) => setNewAcademicYearName(e.target.value)} className="w-full border border-gray-300 p-2" required />
+            </div>
+            <button type="submit" className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2"><Plus size={18} /> Dodaj</button>
+          </form>
+        </div>
+        <div className="bg-white border border-gray-200 shadow-sm">
+          {academicYears.map(y => (
+            <div key={y.id} className="p-4 border-b border-gray-100 flex justify-between items-center">
+              <span className="font-medium">{y.name}</span>
+              <button onClick={() => {
+                const updated = academicYears.filter(x => x.id !== y.id);
+                setAcademicYears(updated);
+                localStorage.setItem('demo_academic_years', JSON.stringify(updated));
+              }} className="text-red-500"><Trash2 size={18} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === 'Dodijeli predmete razredu') {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="flex items-center gap-4 mb-6">
+          <button onClick={() => setActiveTab(null)} className="p-2 bg-gray-200 hover:bg-gray-300 rounded">
+            <ArrowLeft size={20} />
+          </button>
+          <h2 className="text-2xl text-gray-800">Dodijeli predmete razredu</h2>
+        </div>
+        <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
+          <form onSubmit={handleAssignSubjectToClass} className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Razred</label>
+              <select value={selectedClassIdForSubjects} onChange={(e) => setSelectedClassIdForSubjects(e.target.value)} className="w-full border border-gray-300 p-2 bg-white" required>
+                <option value="">-- Odaberi razred --</option>
+                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Predmet</label>
+              <select value={selectedSubjectId} onChange={(e) => setSelectedSubjectId(e.target.value)} className="w-full border border-gray-300 p-2 bg-white" required>
+                <option value="">-- Odaberi predmet --</option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Nastavnik</label>
+              <select value={newSubjectTeacherId} onChange={(e) => setNewSubjectTeacherId(e.target.value)} className="w-full border border-gray-300 p-2 bg-white" required>
+                <option value="">-- Odaberi nastavnika --</option>
+                {users.filter(u => u.role === 'teacher').map(t => <option key={t.id} value={t.id}>{userNames[t.id] || t.email}</option>)}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 w-full justify-center"><Plus size={18} /> Dodijeli</button>
+            </div>
+          </form>
+        </div>
+        <div className="bg-white border border-gray-200 shadow-sm">
+          {classSubjects.filter(cs => !selectedClassIdForSubjects || cs.class_id === selectedClassIdForSubjects).map(cs => {
+            const cls = classes.find(c => c.id === cs.class_id);
+            const sub = subjects.find(s => s.id === cs.subject_id);
+            const tea = users.find(u => u.id === cs.teacher_id);
+            return (
+              <div key={cs.id} className="p-4 border-b border-gray-100 flex justify-between items-center">
+                <div>
+                  <span className="font-bold">{cls?.name}</span>: {sub?.name} ({userNames[tea?.id] || tea?.email})
+                </div>
+                <button onClick={() => {
+                  const updated = classSubjects.filter(x => x.id !== cs.id);
+                  setClassSubjects(updated);
+                  localStorage.setItem('demo_class_subjects', JSON.stringify(updated));
+                }} className="text-red-500"><Trash2 size={18} /></button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   if (activeTab === 'Korisnici') {
     return (
       <div className="max-w-4xl mx-auto">
@@ -291,8 +499,18 @@ export default function AdministracijaPage() {
 
         <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
           <h3 className="text-lg font-bold mb-4">Dodaj novog korisnika</h3>
-          <form onSubmit={handleAddUser} className="flex gap-4 items-end">
-            <div className="flex-1">
+          <form onSubmit={handleAddUser} className="grid grid-cols-2 gap-4 items-end">
+            <div>
+              <label className="block text-sm text-gray-600 mb-1">Ime i prezime</label>
+              <input 
+                type="text" 
+                value={newFullName}
+                onChange={(e) => setNewFullName(e.target.value)}
+                className="w-full border border-gray-300 p-2" 
+                required 
+              />
+            </div>
+            <div>
               <label className="block text-sm text-gray-600 mb-1">E-mail (Korisničko ime)</label>
               <input 
                 type="email" 
@@ -302,7 +520,7 @@ export default function AdministracijaPage() {
                 required 
               />
             </div>
-            <div className="flex-1">
+            <div>
               <label className="block text-sm text-gray-600 mb-1">Lozinka</label>
               <input 
                 type="text" 
@@ -312,7 +530,7 @@ export default function AdministracijaPage() {
                 required 
               />
             </div>
-            <div className="w-48">
+            <div>
               <label className="block text-sm text-gray-600 mb-1">Uloga</label>
               <select 
                 value={newRole}
@@ -325,28 +543,33 @@ export default function AdministracijaPage() {
                 <option value="admin">Administrator</option>
               </select>
             </div>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 disabled:opacity-50"
-            >
-              <Plus size={18} /> Dodaj
-            </button>
+            <div className="col-span-2 flex justify-end">
+              <button 
+                type="submit" 
+                disabled={loading}
+                className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 disabled:opacity-50"
+              >
+                <Plus size={18} /> Dodaj
+              </button>
+            </div>
           </form>
         </div>
 
         <div className="bg-white border border-gray-200 shadow-sm">
-          <div className="grid grid-cols-4 gap-4 p-4 bg-gray-50 border-b border-gray-200 font-bold text-sm text-gray-700">
-            <div className="col-span-2">E-mail</div>
+          <div className="grid grid-cols-5 gap-4 p-4 bg-gray-50 border-b border-gray-200 font-bold text-sm text-gray-700">
+            <div className="col-span-2">Ime i prezime / E-mail</div>
             <div>Uloga</div>
-            <div className="text-right">Akcije</div>
+            <div className="text-right col-span-2">Akcije</div>
           </div>
           {loading && users.length === 0 ? (
             <div className="p-8 text-center text-gray-500">Učitavanje korisnika...</div>
           ) : (
             users.map(user => (
-              <div key={user.id} className="grid grid-cols-4 gap-4 p-4 border-b border-gray-100 items-center">
-                <div className="col-span-2 font-medium">{user.email}</div>
+              <div key={user.id} className="grid grid-cols-5 gap-4 p-4 border-b border-gray-100 items-center">
+                <div className="col-span-2">
+                  <div className="font-medium">{userNames[user.id] || 'Nema imena'}</div>
+                  <div className="text-xs text-gray-500">{user.email}</div>
+                </div>
                 <div>
                   <span className={`px-2 py-1 text-xs rounded-full ${
                     user.role === 'admin' ? 'bg-purple-100 text-purple-800' :
@@ -357,7 +580,7 @@ export default function AdministracijaPage() {
                     {user.role}
                   </span>
                 </div>
-                <div className="text-right">
+                <div className="text-right col-span-2">
                   <button 
                     onClick={() => handleDeleteUser(user.id)}
                     className="text-red-500 hover:text-red-700 p-2"
@@ -730,7 +953,7 @@ export default function AdministracijaPage() {
               >
                 <option value="">-- Odaberi nastavnika --</option>
                 {users.filter(u => u.role === 'teacher').map(t => (
-                  <option key={t.id} value={t.id}>{t.email}</option>
+                  <option key={t.id} value={t.id}>{userNames[t.id] || t.email}</option>
                 ))}
               </select>
             </div>
@@ -771,7 +994,7 @@ export default function AdministracijaPage() {
               const subject = subjects.find(s => s.id === assignment.subject_id);
               return (
                 <div key={assignment.id} className="grid grid-cols-3 gap-4 p-4 border-b border-gray-100 items-center">
-                  <div className="font-medium">{teacher?.email || 'Nepoznat nastavnik'}</div>
+                  <div className="font-medium">{userNames[teacher?.id] || teacher?.email || 'Nepoznat nastavnik'}</div>
                   <div>{subject?.name || 'Nepoznat predmet'}</div>
                   <div className="text-right">
                     <button 
