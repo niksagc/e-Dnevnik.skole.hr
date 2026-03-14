@@ -2,24 +2,45 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 import { LogOut, BookOpen, Calendar, Bell } from 'lucide-react';
 
 export default function UcenikPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [grades, setGrades] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
+    const fetchUserData = async () => {
+      const storedUser = localStorage.getItem('currentUser');
+      if (!storedUser) {
+        router.push('/');
+        return;
+      }
+      
       const parsedUser = JSON.parse(storedUser);
       if (parsedUser.role !== 'student') {
         router.push('/');
-      } else {
-        setUser(parsedUser);
+        return;
       }
-    } else {
-      router.push('/');
-    }
+      
+      setUser(parsedUser);
+
+      if (parsedUser.student_id) {
+        const { data } = await supabase
+          .from('grades')
+          .select('*')
+          .eq('student_id', parsedUser.student_id)
+          .order('date_created', { ascending: false });
+          
+        if (data) setGrades(data);
+      }
+      
+      setLoading(false);
+    };
+
+    fetchUserData();
   }, [router]);
 
   const handleLogout = () => {
@@ -27,6 +48,7 @@ export default function UcenikPage() {
     router.push('/');
   };
 
+  if (loading) return <div className="p-8 text-center">Učitavanje...</div>;
   if (!user) return null;
 
   return (
@@ -40,7 +62,7 @@ export default function UcenikPage() {
           </h1>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span>{user.name}</span>
+          <span>{user.name || user.email}</span>
           <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-300 transition-colors">
             <LogOut size={16} /> Odjava
           </button>
@@ -49,7 +71,7 @@ export default function UcenikPage() {
 
       {/* Main Content */}
       <main className="max-w-5xl mx-auto p-6 mt-6">
-        <h2 className="text-2xl text-gray-800 mb-6">Dobrodošli, {user.name}</h2>
+        <h2 className="text-2xl text-gray-800 mb-6">Dobrodošli, {user.name || user.email}</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Ocjene Card */}
@@ -86,26 +108,23 @@ export default function UcenikPage() {
             <h3 className="font-bold text-gray-800">Nedavno upisane ocjene</h3>
           </div>
           <div className="p-6">
-            <div className="flex justify-between items-center py-3 border-b border-gray-100">
-              <div>
-                <p className="font-bold text-gray-800">Hrvatski jezik</p>
-                <p className="text-sm text-gray-500">Književnost i stvaralaštvo</p>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-500">14. 03. 2026.</span>
-                <span className="w-10 h-10 flex items-center justify-center bg-green-100 text-green-800 font-bold text-lg rounded">5</span>
-              </div>
-            </div>
-            <div className="flex justify-between items-center py-3 border-b border-gray-100">
-              <div>
-                <p className="font-bold text-gray-800">Matematika</p>
-                <p className="text-sm text-gray-500">Usvojenost znanja</p>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-500">12. 03. 2026.</span>
-                <span className="w-10 h-10 flex items-center justify-center bg-blue-100 text-blue-800 font-bold text-lg rounded">4</span>
-              </div>
-            </div>
+            {grades.length > 0 ? (
+              grades.map(grade => (
+                <div key={grade.id} className="flex justify-between items-center py-3 border-b border-gray-100">
+                  <div>
+                    <p className="font-bold text-gray-800">{grade.subject}</p>
+                    <p className="text-sm text-gray-500">{grade.element}</p>
+                    {grade.note && <p className="text-xs text-gray-400 mt-1 italic">"{grade.note}"</p>}
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm text-gray-500">{new Date(grade.date_created).toLocaleDateString('hr-HR')}</span>
+                    <span className="w-10 h-10 flex items-center justify-center bg-blue-100 text-blue-800 font-bold text-lg rounded">{grade.grade}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center p-4 text-gray-500">Nemate još upisanih ocjena.</div>
+            )}
           </div>
         </div>
       </main>

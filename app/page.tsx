@@ -2,21 +2,34 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { users } from '@/lib/mock-data';
+import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     
-    const user = users.find(u => u.username === username && u.password === password);
-    
-    if (user) {
+    try {
+      const { data: user, error: dbError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', username)
+        .eq('password', password)
+        .single();
+      
+      if (dbError || !user) {
+        setError('Pogrešno korisničko ime ili lozinka.');
+        setLoading(false);
+        return;
+      }
+
       // Spremamo korisnika u lokalnu memoriju za simulaciju sesije
       localStorage.setItem('currentUser', JSON.stringify(user));
       
@@ -28,8 +41,10 @@ export default function LoginPage() {
       } else if (user.role === 'parent') {
         router.push('/roditelj');
       }
-    } else {
-      setError('Pogrešno korisničko ime ili lozinka.');
+    } catch (err) {
+      setError('Došlo je do pogreške pri spajanju na bazu.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -70,15 +85,16 @@ export default function LoginPage() {
           <div className="flex justify-end pt-4">
             <button 
               type="submit" 
-              className="w-full ml-32 bg-[#3b5998] hover:bg-[#2d4373] text-white py-2 px-4 transition-colors"
+              disabled={loading}
+              className="w-full ml-32 bg-[#3b5998] hover:bg-[#2d4373] text-white py-2 px-4 transition-colors disabled:opacity-50"
             >
-              PRIJAVA
+              {loading ? 'PRIJAVA...' : 'PRIJAVA'}
             </button>
           </div>
         </form>
         
         <div className="mt-8 text-xs text-gray-500 text-center border-t pt-4">
-          <p>Dostupni testni računi:</p>
+          <p>Dostupni testni računi (nakon što pokrenete SQL skriptu):</p>
           <p>Admin: nikola.duric2@skole.hr / 123410122005</p>
           <p>Nastavnik: marko.kovacevic@skole.hr / 123456</p>
           <p>Učenik: mario.kovac@skole.hr / 123456</p>

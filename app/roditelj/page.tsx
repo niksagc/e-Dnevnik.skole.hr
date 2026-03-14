@@ -2,24 +2,45 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 import { LogOut, BookOpen, Calendar, Bell, User } from 'lucide-react';
 
 export default function RoditeljPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
+  const [grades, setGrades] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
+    const fetchUserData = async () => {
+      const storedUser = localStorage.getItem('currentUser');
+      if (!storedUser) {
+        router.push('/');
+        return;
+      }
+      
       const parsedUser = JSON.parse(storedUser);
       if (parsedUser.role !== 'parent') {
         router.push('/');
-      } else {
-        setUser(parsedUser);
+        return;
       }
-    } else {
-      router.push('/');
-    }
+      
+      setUser(parsedUser);
+
+      if (parsedUser.student_id) {
+        const { data } = await supabase
+          .from('grades')
+          .select('*')
+          .eq('student_id', parsedUser.student_id)
+          .order('date_created', { ascending: false });
+          
+        if (data) setGrades(data);
+      }
+      
+      setLoading(false);
+    };
+
+    fetchUserData();
   }, [router]);
 
   const handleLogout = () => {
@@ -27,6 +48,7 @@ export default function RoditeljPage() {
     router.push('/');
   };
 
+  if (loading) return <div className="p-8 text-center">Učitavanje...</div>;
   if (!user) return null;
 
   return (
@@ -40,7 +62,7 @@ export default function RoditeljPage() {
           </h1>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span>{user.name}</span>
+          <span>{user.name || user.email}</span>
           <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-300 transition-colors">
             <LogOut size={16} /> Odjava
           </button>
@@ -49,7 +71,7 @@ export default function RoditeljPage() {
 
       {/* Main Content */}
       <main className="max-w-5xl mx-auto p-6 mt-6">
-        <h2 className="text-2xl text-gray-800 mb-6">Dobrodošli, {user.name}</h2>
+        <h2 className="text-2xl text-gray-800 mb-6">Dobrodošli, {user.name || user.email}</h2>
         
         {/* Child Selector */}
         <div className="bg-white p-4 border border-gray-200 shadow-sm rounded-lg mb-8 flex items-center gap-4">
@@ -88,6 +110,32 @@ export default function RoditeljPage() {
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-2">Raspored ispita</h3>
             <p className="text-sm text-gray-500">Pregledajte kalendar najavljenih pisanih provjera.</p>
+          </div>
+        </div>
+
+        {/* Recent Grades Preview */}
+        <div className="mt-10 bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+            <h3 className="font-bold text-gray-800">Nedavno upisane ocjene</h3>
+          </div>
+          <div className="p-6">
+            {grades.length > 0 ? (
+              grades.map(grade => (
+                <div key={grade.id} className="flex justify-between items-center py-3 border-b border-gray-100">
+                  <div>
+                    <p className="font-bold text-gray-800">{grade.subject}</p>
+                    <p className="text-sm text-gray-500">{grade.element}</p>
+                    {grade.note && <p className="text-xs text-gray-400 mt-1 italic">"{grade.note}"</p>}
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm text-gray-500">{new Date(grade.date_created).toLocaleDateString('hr-HR')}</span>
+                    <span className="w-10 h-10 flex items-center justify-center bg-blue-100 text-blue-800 font-bold text-lg rounded">{grade.grade}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center p-4 text-gray-500">Nema upisanih ocjena.</div>
+            )}
           </div>
         </div>
       </main>

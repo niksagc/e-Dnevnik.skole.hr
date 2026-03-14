@@ -1,11 +1,23 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { schools } from '@/lib/mock-data';
+import { supabase } from '@/lib/supabase';
 import { LogOut } from 'lucide-react';
 
 export default function SkolePage() {
   const router = useRouter();
+  const [schools, setSchools] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSchools = async () => {
+      const { data, error } = await supabase.from('schools').select('*');
+      if (data) setSchools(data);
+      setLoading(false);
+    };
+    fetchSchools();
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
@@ -27,19 +39,26 @@ export default function SkolePage() {
 
         <h2 className="text-2xl text-gray-800 mb-6 font-normal">Odaberite školu</h2>
 
-        <div className="border border-gray-200">
-          {schools.map((school, index) => (
-            <div 
-              key={school.id}
-              onClick={() => router.push('/razredi')}
-              className={`p-4 cursor-pointer border-b border-gray-200 hover:bg-red-50 transition-colors ${
-                index === 1 ? 'bg-red-100 border-red-300' : 'bg-white'
-              }`}
-            >
-              <span className="text-gray-800">{school.name}</span>
-            </div>
-          ))}
-        </div>
+        {loading ? (
+          <div className="text-center p-4 text-gray-500">Učitavanje škola...</div>
+        ) : (
+          <div className="border border-gray-200">
+            {schools.map((school, index) => (
+              <div 
+                key={school.id}
+                onClick={() => router.push('/razredi')}
+                className={`p-4 cursor-pointer border-b border-gray-200 hover:bg-red-50 transition-colors ${
+                  index === 1 ? 'bg-red-100 border-red-300' : 'bg-white'
+                }`}
+              >
+                <span className="text-gray-800">{school.name}</span>
+              </div>
+            ))}
+            {schools.length === 0 && (
+              <div className="p-4 text-gray-500">Nema pronađenih škola. Jeste li pokrenuli SQL skriptu u Supabaseu?</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

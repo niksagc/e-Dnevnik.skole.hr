@@ -1,11 +1,23 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { classes } from '@/lib/mock-data';
+import { supabase } from '@/lib/supabase';
 import { Lock } from 'lucide-react';
 
 export default function RazrediPage() {
   const router = useRouter();
+  const [classes, setClasses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      const { data, error } = await supabase.from('classes').select('*');
+      if (data) setClasses(data);
+      setLoading(false);
+    };
+    fetchClasses();
+  }, []);
 
   const getRowColor = (role: string) => {
     switch (role) {
@@ -43,19 +55,26 @@ export default function RazrediPage() {
         <h2 className="text-sm font-bold mb-2">Odaberite razrednu knjigu</h2>
 
         {/* Class List */}
-        <div className="border border-red-500 mb-8">
-          {classes.map((cls) => (
-            <div 
-              key={cls.id}
-              onClick={() => router.push(`/razredi/${cls.id}/imenik`)}
-              className={`flex justify-between items-center p-3 cursor-pointer border-b border-gray-200 transition-colors text-sm ${getRowColor(cls.role)}`}
-            >
-              <div className="w-16 font-bold">{cls.name}</div>
-              <div className="flex-1">{cls.teacher}</div>
-              <div className="text-right">{cls.program}</div>
-            </div>
-          ))}
-        </div>
+        {loading ? (
+          <div className="text-center p-4 text-gray-500">Učitavanje razreda...</div>
+        ) : (
+          <div className="border border-red-500 mb-8">
+            {classes.map((cls) => (
+              <div 
+                key={cls.id}
+                onClick={() => router.push(`/razredi/${cls.id}/imenik`)}
+                className={`flex justify-between items-center p-3 cursor-pointer border-b border-gray-200 transition-colors text-sm ${getRowColor(cls.role)}`}
+              >
+                <div className="w-16 font-bold">{cls.name}</div>
+                <div className="flex-1">{cls.teacher}</div>
+                <div className="text-right">{cls.program}</div>
+              </div>
+            ))}
+            {classes.length === 0 && (
+              <div className="p-4 text-gray-500 bg-white">Nema pronađenih razreda. Jeste li pokrenuli SQL skriptu u Supabaseu?</div>
+            )}
+          </div>
+        )}
 
         {/* Filters */}
         <div className="flex items-center gap-4 border border-red-500 p-4 w-fit">
