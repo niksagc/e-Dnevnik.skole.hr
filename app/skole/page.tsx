@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { db, auth, handleFirestoreError, OperationType } from '@/lib/firebase';
-import { collection, getDocs, addDoc, query, orderBy } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
+import { collection, getDocs, addDoc, query, orderBy, getDoc, doc } from 'firebase/firestore';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { LogOut, Plus } from 'lucide-react';
 
 export default function SkolePage() {
@@ -17,27 +17,29 @@ export default function SkolePage() {
   const [newSchoolType, setNewSchoolType] = useState('Srednja škola');
 
   useEffect(() => {
-    const init = async () => {
-      const storedUser = localStorage.getItem('currentUser');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+          if (userDoc.exists()) {
+            setUser({ id: userDoc.id, ...userDoc.data() });
+          }
+          
+          const schoolsCollection = collection(db, 'schools');
+          const schoolsSnapshot = await getDocs(query(schoolsCollection, orderBy('name')));
+          const schoolsList = schoolsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setSchools(schoolsList);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${authUser.uid}`);
+        } finally {
+          setLoading(false);
+        }
       }
-
-      try {
-        const schoolsCollection = collection(db, 'schools');
-        const schoolsSnapshot = await getDocs(query(schoolsCollection, orderBy('name')));
-        const schoolsList = schoolsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setSchools(schoolsList);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.LIST, 'schools');
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleCreateSchool = async (e: React.FormEvent) => {

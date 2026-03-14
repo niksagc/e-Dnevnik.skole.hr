@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { checkPermissions } from '@/lib/permissions';
 import { Calendar as CalendarIcon, Edit2, Users, Plus, X, Trash2 } from 'lucide-react';
 import { db, auth, handleFirestoreError } from '@/lib/firebase';
 import { collection, query, getDocs, getDoc, doc, addDoc, deleteDoc, updateDoc, orderBy, where, setDoc } from 'firebase/firestore';
@@ -169,7 +170,17 @@ export default function DnevnikRadaPage() {
   };
 
   const handleAddLesson = async () => {
-    if (!selectedWeek || !selectedDay) return;
+    if (!selectedWeek || !selectedDay || !user) return;
+
+    // Fetch classData (this would ideally be passed or fetched)
+    // For now, assuming we can get it or use a placeholder
+    const classData = { head_teacher: '...', deputy_head_teacher: '...' }; // Need to fetch this
+    const { canEnterHours } = checkPermissions(user, classData, lessonSubject, teacherSubjects);
+    
+    if (!canEnterHours) {
+      alert('Nemate dopuštenje za unos sati za ovaj predmet.');
+      return;
+    }
 
     const blockId = Date.now().toString();
     const newLessons: Lesson[] = [];

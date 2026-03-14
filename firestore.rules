@@ -1,106 +1,41 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: schools
-    // Fields: name, type
-    //
-    // Collection: users
-    // Fields: email, role, name, student_id, school_id
-    //
-    // Collection: students
-    // Fields: name, class_id, school_id
-    //
-    // Collection: classes
-    // Fields: name, school_id, head_teacher_id
-    //
-    // Collection: subjects
-    // Fields: name, school_id
-    //
-    // Collection: grades
-    // Fields: student_id, subject_id, value, note, date, teacher_id, element_id
-    //
-    // Collection: absences
-    // Fields: student_id, date, hours, reason, status
-    //
-    // ===============================================================
-
-    // Helper Functions
+    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
-
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
     function isAdmin() {
-      return isAuthenticated() && 
-        (getUserData().role == 'admin' || 
-         (request.auth.token.email == "nikoladuric025@gmail.com" && request.auth.token.email_verified == true));
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isHeadTeacher(classId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/classes/$(classId)).data.head_teacher == request.auth.uid;
+    }
+    function isDeputyHeadTeacher(classId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/classes/$(classId)).data.deputy_head_teacher == request.auth.uid;
+    }
+    function canEditClass(classId) {
+      return isAdmin() || isHeadTeacher(classId) || isDeputyHeadTeacher(classId);
     }
 
-    function isTeacher() {
-      return isAuthenticated() && getUserData().role == 'teacher';
+    // Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
-
-    function isParent() {
-      return isAuthenticated() && getUserData().role == 'parent';
-    }
-
-    function isStudent() {
-      return isAuthenticated() && getUserData().role == 'student';
-    }
-
-    function belongsToSchool(schoolId) {
-      return getUserData().school_id == schoolId;
-    }
-
-    // Schools
     match /schools/{schoolId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
-
-    // Users
-    match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow delete: if isAdmin();
-    }
-
-    // Students
-    match /students/{studentId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
-    }
-
-    // Classes
     match /classes/{classId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
+      allow create: if isAdmin();
+      allow update: if canEditClass(classId);
+      allow delete: if isAdmin();
     }
-
-    // Subjects
-    match /subjects/{subjectId} {
+    match /dnevnik_weeks/{weekId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
-    }
-
-    // Grades
-    match /grades/{gradeId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
-    }
-
-    // Absences
-    match /absences/{absenceId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() || isTeacher();
+      allow write: if isAdmin(); // Needs refinement based on teacher subjects
     }
   }
 }

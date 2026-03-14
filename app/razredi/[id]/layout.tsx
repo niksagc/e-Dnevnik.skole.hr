@@ -1,8 +1,12 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { Users, BookOpen, Calendar, FileText, BarChart2, Settings, Search, Menu, LogOut } from 'lucide-react';
+import { signOut } from 'firebase/auth';
+import { db, auth } from '@/lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function RazredLayout({
   children,
@@ -12,20 +16,39 @@ export default function RazredLayout({
   const pathname = usePathname();
   const params = useParams();
   const router = useRouter();
-  const classId = params.id as string;
+  const schoolId = params.id as string;
 
-  const handleLogout = () => {
-    localStorage.removeItem('currentUser');
+  const handleLogout = async () => {
+    await signOut(auth);
     router.push('/');
   };
 
+  const [school, setSchool] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSchool = async () => {
+      try {
+        const schoolDoc = await getDoc(doc(db, 'schools', schoolId));
+        if (schoolDoc.exists()) {
+          setSchool(schoolDoc.data());
+        }
+      } catch (error) {
+        console.error('Error fetching school:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSchool();
+  }, [schoolId]);
+
   const navItems = [
-    { name: 'Imenik', path: `/razredi/${classId}/imenik`, icon: Users },
-    { name: 'Pregled rada', path: `/razredi/${classId}/pregled`, icon: BookOpen },
-    { name: 'Dnevnik rada', path: `/razredi/${classId}/dnevnik`, icon: Calendar },
-    { name: 'Zapisnici', path: `/razredi/${classId}/zapisnici`, icon: FileText },
-    { name: 'Izvještaji', path: `/razredi/${classId}/izvjestaji`, icon: BarChart2 },
-    { name: 'Administracija', path: `/razredi/${classId}/administracija`, icon: Settings },
+    { name: 'Imenik', path: `/razredi/${schoolId}/imenik`, icon: Users },
+    { name: 'Pregled rada', path: `/razredi/${schoolId}/pregled`, icon: BookOpen },
+    { name: 'Dnevnik rada', path: `/razredi/${schoolId}/dnevnik`, icon: Calendar },
+    { name: 'Zapisnici', path: `/razredi/${schoolId}/zapisnici`, icon: FileText },
+    { name: 'Izvještaji', path: `/razredi/${schoolId}/izvjestaji`, icon: BarChart2 },
+    { name: 'Administracija', path: `/razredi/${schoolId}/administracija`, icon: Settings },
   ];
 
   return (
@@ -37,17 +60,18 @@ export default function RazredLayout({
             e-<span className="text-green-400">D</span><span className="text-blue-400">n</span><span className="text-purple-400">e</span><span className="text-pink-400">v</span><span className="text-red-400">n</span><span className="text-yellow-400">i</span><span className="text-blue-300">k</span>
           </h1>
           <div className="bg-[#0d2342] px-3 py-1 text-sm">
-            Testna škola CARNet Zadar
+            {loading ? 'Učitavanje...' : school?.name || 'Nepoznata škola'}
           </div>
           <div className="bg-[#0d2342] px-3 py-1 text-sm">
             24-25
           </div>
           <div className="bg-[#0d2342] px-3 py-1 text-sm">
-            1.a
+            {/* Placeholder for class name if applicable */}
+            -
           </div>
         </div>
         <div className="flex items-center gap-4 text-sm">
-          <span>M. Jurić</span>
+          <span>N. Đurić</span>
           <span className="text-xs text-gray-300">školski admin</span>
           <button onClick={handleLogout} className="flex items-center gap-1 hover:text-red-300 transition-colors ml-2">
             <LogOut size={16} /> Odjava
@@ -77,7 +101,10 @@ export default function RazredLayout({
           <Search size={16} />
           Pretraživanje
         </div>
-        <div className="px-4 py-3 bg-[#2c5282] text-white hover:bg-[#1a365d] cursor-pointer transition-colors">
+        <div 
+          onClick={() => alert('Izbornik još nije implementiran.')}
+          className="px-4 py-3 bg-[#2c5282] text-white hover:bg-[#1a365d] cursor-pointer transition-colors"
+        >
           <Menu size={20} />
         </div>
       </nav>

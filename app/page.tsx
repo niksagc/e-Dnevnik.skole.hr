@@ -1,14 +1,15 @@
 'use client';
 
-import Image from 'next/image';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { auth, db, handleFirestoreError, OperationType } from '@/lib/firebase';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db, handleFirestoreError, OperationType, signInWithEmailAndPassword } from '@/lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function LoginPage() {
   const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -18,31 +19,19 @@ export default function LoginPage() {
       const userDocRef = doc(db, 'users', user.uid);
       const userDoc = await getDoc(userDocRef);
       
-      let userData;
       if (userDoc.exists()) {
-        userData = userDoc.data();
+        const userData = userDoc.data();
+        
+        // Preusmjeravanje ovisno o ulozi
+        if (userData.role === 'admin' || userData.role === 'teacher') {
+          router.push('/skole');
+        } else if (userData.role === 'student') {
+          router.push('/ucenik');
+        } else if (userData.role === 'parent') {
+          router.push('/roditelj');
+        }
       } else {
-        // Create new user record if it doesn't exist
-        const isDefaultAdmin = user.email === 'nikoladuric025@gmail.com';
-        userData = {
-          email: user.email,
-          name: user.displayName || '',
-          role: isDefaultAdmin ? 'admin' : 'teacher', // Default to teacher for now, or student
-          createdAt: new Date().toISOString()
-        };
-        await setDoc(userDocRef, userData);
-      }
-
-      // Spremamo korisnika u lokalnu memoriju za simulaciju sesije (legacy support)
-      localStorage.setItem('currentUser', JSON.stringify({ ...userData, id: user.uid }));
-      
-      // Preusmjeravanje ovisno o ulozi
-      if (userData.role === 'admin' || userData.role === 'teacher') {
-        router.push('/skole');
-      } else if (userData.role === 'student') {
-        router.push('/ucenik');
-      } else if (userData.role === 'parent') {
-        router.push('/roditelj');
+        setError('Korisnik nema dodijeljenu ulogu u sustavu.');
       }
     } catch (err) {
       console.error('Error checking user role:', err);
@@ -61,16 +50,15 @@ export default function LoginPage() {
     return () => unsubscribe();
   }, [checkUserRoleAndRedirect]);
 
-  const handleGoogleLogin = async () => {
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError('');
     setLoading(true);
-    const provider = new GoogleAuthProvider();
     try {
-      const result = await signInWithPopup(auth, provider);
-      // onAuthStateChanged will handle the redirect
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (err: any) {
       console.error('Login error:', err);
-      setError('Došlo je do pogreške pri prijavi s Google računom.');
+      setError('Neispravan e-mail ili lozinka.');
       setLoading(false);
     }
   };
@@ -87,23 +75,31 @@ export default function LoginPage() {
           </div>
         )}
         
-        <div className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4">
+          <input 
+            type="email" 
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="E-mail"
+            className="w-full border border-gray-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
+          <input 
+            type="password" 
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Lozinka"
+            className="w-full border border-gray-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+            required
+          />
           <button 
-            onClick={handleGoogleLogin}
+            type="submit"
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-3 px-4 rounded-lg shadow-sm transition-all disabled:opacity-50"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg shadow-sm transition-all disabled:opacity-50"
           >
-            <Image 
-              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
-              alt="Google" 
-              width={20} 
-              height={20} 
-              className="w-5 h-5" 
-              referrerPolicy="no-referrer"
-            />
-            <span>{loading ? 'PRIJAVA...' : 'Prijavi se putem Google-a'}</span>
+            {loading ? 'PRIJAVA...' : 'Prijavi se'}
           </button>
-        </div>
+        </form>
         
         <div className="mt-12 text-xs text-gray-400">
           <p>&copy; 2026 e-Dnevnik Sustav. Sva prava pridržana.</p>

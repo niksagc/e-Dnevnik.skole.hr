@@ -16,11 +16,6 @@ export default function SchoolDashboard() {
 
   useEffect(() => {
     const init = async () => {
-      const storedUser = localStorage.getItem('currentUser');
-      if (storedUser) {
-        setUser(JSON.parse(storedUser));
-      }
-
       try {
         const schoolDoc = await getDoc(doc(db, 'schools', schoolId));
         if (schoolDoc.exists()) {
@@ -40,28 +35,28 @@ export default function SchoolDashboard() {
       title: 'Razredi',
       description: 'Pregled razrednih knjiga, imenika i dnevnika rada.',
       icon: <GraduationCap size={32} className="text-blue-600" />,
-      link: `/razredi`, // We can later scope this to /skole/${schoolId}/razredi
+      link: `/razredi/${schoolId}`,
       color: 'bg-blue-50 border-blue-200'
     },
     {
       title: 'Korisnici',
       description: 'Upravljanje nastavnicima, učenicima i roditeljima.',
       icon: <Users size={32} className="text-green-600" />,
-      link: `/razredi/1/administracija?tab=Korisnici`,
+      link: `/razredi/${schoolId}/administracija?tab=Korisnici`,
       color: 'bg-green-50 border-green-200'
     },
     {
       title: 'Predmeti',
       description: 'Administracija predmeta i dodjela nastavnika.',
       icon: <BookOpen size={32} className="text-purple-600" />,
-      link: `/razredi/1/administracija?tab=Administracija predmeta`,
+      link: `/razredi/${schoolId}/administracija?tab=Administracija predmeta`,
       color: 'bg-purple-50 border-purple-200'
     },
     {
       title: 'Administracija škole',
       description: 'Postavke škole, školske godine i razredni odjeli.',
       icon: <Settings size={32} className="text-orange-600" />,
-      link: `/razredi/1/administracija`,
+      link: `/razredi/${schoolId}/administracija`,
       color: 'bg-orange-50 border-orange-200'
     }
   ];
