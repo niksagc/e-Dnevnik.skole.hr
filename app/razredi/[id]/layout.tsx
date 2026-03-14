@@ -73,11 +73,11 @@ export default function RazredLayout({
             </Link>
           );
         })}
-        <div className="flex items-center gap-2 px-6 py-3 text-sm font-medium text-gray-600 border-r border-gray-200 hover:bg-gray-50 cursor-pointer">
+        <div className="flex items-center gap-2 px-6 py-3 text-sm font-medium text-gray-600 border-r border-gray-200 hover:bg-gray-50 cursor-pointer ml-auto">
           <Search size={16} />
           Pretraživanje
         </div>
-        <div className="px-4 py-3 text-gray-600 hover:bg-gray-50 cursor-pointer">
+        <div className="px-4 py-3 bg-[#2c5282] text-white hover:bg-[#1a365d] cursor-pointer transition-colors">
           <Menu size={20} />
         </div>
       </nav>

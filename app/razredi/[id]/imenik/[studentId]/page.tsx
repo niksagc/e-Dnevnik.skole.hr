@@ -24,7 +24,20 @@ export default function StudentDetailsPage() {
   const [newGrade, setNewGrade] = useState<number | null>(null);
   const [isWritten, setIsWritten] = useState(false);
   const [note, setNote] = useState('');
+  const [gradeDate, setGradeDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [outcomes, setOutcomes] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  // Final grade state
+  const [showFinalGradeModal, setShowFinalGradeModal] = useState(false);
+  const [finalGrade, setFinalGrade] = useState<number | string | null>(null);
+
+  // Exam state
+  const [showExamModal, setShowExamModal] = useState(false);
+  const [examType, setExamType] = useState('Dopunski rad');
+  const [examGrade, setExamGrade] = useState<number | null>(null);
+  const [examNote, setExamNote] = useState('');
+  const [examDate, setExamDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     const fetchStudentData = async () => {
@@ -69,13 +82,20 @@ export default function StudentDetailsPage() {
     if (!newGrade || !selectedSubject || !selectedElement) return;
     setSaving(true);
     
+    let finalNote = note;
+    if (outcomes.length > 0) {
+      const outcomesStr = `[Ishodi: ${outcomes.join(', ')}]`;
+      finalNote = note ? `${note} ${outcomesStr}` : outcomesStr;
+    }
+    
     if (editingGradeId) {
       const { data, error } = await supabase
         .from('grades')
         .update({
           grade: newGrade,
           is_written: isWritten,
-          note: note
+          note: finalNote,
+          date_created: new Date(gradeDate).toISOString()
         })
         .eq('id', editingGradeId)
         .select();
@@ -93,8 +113,8 @@ export default function StudentDetailsPage() {
         element: selectedElement,
         grade: newGrade,
         is_written: isWritten,
-        note: note,
-        date_created: new Date().toISOString()
+        note: finalNote,
+        date_created: new Date(gradeDate).toISOString()
       };
 
       const { data, error } = await supabase.from('grades').insert([gradeData]).select();
@@ -130,6 +150,8 @@ export default function StudentDetailsPage() {
     setNewGrade(null);
     setIsWritten(false);
     setNote('');
+    setGradeDate(new Date().toISOString().split('T')[0]);
+    setOutcomes([]);
     setShowGradeModal(true);
   };
 
@@ -138,8 +160,85 @@ export default function StudentDetailsPage() {
     setEditingGradeId(grade.id);
     setNewGrade(grade.grade);
     setIsWritten(grade.is_written);
-    setNote(grade.note || '');
+    
+    let parsedNote = grade.note || '';
+    let parsedOutcomes: string[] = [];
+    
+    const outcomesMatch = parsedNote.match(/\[Ishodi: (.*?)\]/);
+    if (outcomesMatch) {
+      parsedOutcomes = outcomesMatch[1].split(', ');
+      parsedNote = parsedNote.replace(/\[Ishodi: .*?\]/, '').trim();
+    }
+    
+    setNote(parsedNote);
+    setGradeDate(new Date(grade.date_created).toISOString().split('T')[0]);
+    setOutcomes(parsedOutcomes);
     setShowGradeModal(true);
+  };
+
+  const handleSaveFinalGrade = async () => {
+    if (!finalGrade || !selectedSubject) return;
+    setSaving(true);
+    
+    // Check if final grade already exists
+    const existingFinalGrade = grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO');
+    
+    if (existingFinalGrade) {
+      const { data, error } = await supabase
+        .from('grades')
+        .update({ grade: typeof finalGrade === 'number' ? finalGrade : null, note: typeof finalGrade === 'string' ? finalGrade : '' })
+        .eq('id', existingFinalGrade.id)
+        .select();
+        
+      if (!error && data) {
+        setGrades(grades.map(g => g.id === existingFinalGrade.id ? data[0] : g));
+      }
+    } else {
+      const gradeData = {
+        student_id: studentId,
+        subject: selectedSubject,
+        element: 'ZAKLJUČNO',
+        grade: typeof finalGrade === 'number' ? finalGrade : null,
+        note: typeof finalGrade === 'string' ? finalGrade : '',
+        is_written: false,
+        date_created: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase.from('grades').insert([gradeData]).select();
+      if (!error && data) {
+        setGrades([...grades, data[0]]);
+      }
+    }
+    
+    setSaving(false);
+    setShowFinalGradeModal(false);
+  };
+
+  const handleSaveExam = async () => {
+    if (!examGrade || !selectedSubject) return;
+    setSaving(true);
+    
+    const gradeData = {
+      student_id: studentId,
+      subject: selectedSubject,
+      element: examType,
+      grade: examGrade,
+      note: examNote,
+      is_written: false,
+      date_created: new Date(examDate).toISOString()
+    };
+
+    const { data, error } = await supabase.from('grades').insert([gradeData]).select();
+    if (!error && data) {
+      setGrades([...grades, data[0]]);
+      setShowExamModal(false);
+      setExamGrade(null);
+      setExamNote('');
+    } else {
+      alert('Greška pri spremanju ispita.');
+    }
+    
+    setSaving(false);
   };
 
   const getMonthIndex = (dateString: string) => {
@@ -248,8 +347,27 @@ export default function StudentDetailsPage() {
           {/* Final Grade Row */}
           <div className="flex justify-between items-center p-3 border-b border-gray-200 bg-gray-50">
             <div className="text-sm font-bold text-gray-700">ZAKLJUČENO</div>
-            <div className="flex gap-2">
-              <div className="w-16 h-8 border border-gray-300 bg-white"></div>
+            <div className="flex gap-2 items-center">
+              {(grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO')?.grade === 1 || 
+                grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO')?.note === 'Neocijenjen') && (
+                <button 
+                  onClick={() => setShowExamModal(true)}
+                  className="text-sm text-red-600 border border-red-300 px-2 py-1 bg-white hover:bg-red-50"
+                >
+                  Ispiti
+                </button>
+              )}
+              <div 
+                className="w-16 h-8 border border-gray-300 bg-white flex items-center justify-center font-bold cursor-pointer hover:bg-gray-100"
+                onClick={() => {
+                  const existing = grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO');
+                  setFinalGrade(existing ? (existing.grade || existing.note) : null);
+                  setShowFinalGradeModal(true);
+                }}
+              >
+                {grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO')?.grade || 
+                 grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO')?.note || ''}
+              </div>
             </div>
           </div>
 
@@ -273,8 +391,8 @@ export default function StudentDetailsPage() {
           </div>
           
           {/* List of notes for this subject */}
-          <div className="p-3">
-            {grades.filter(g => g.subject === selectedSubject && g.note).map(g => (
+          <div className="p-3 border-b border-gray-200">
+            {grades.filter(g => g.subject === selectedSubject && g.note && !['ZAKLJUČNO', 'Dopunski rad', 'Popravni ispit', 'Razlikovni ispit'].includes(g.element)).map(g => (
               <div key={g.id} className="text-sm border-b border-gray-100 py-2 flex justify-between">
                 <div className="w-2/3">{g.note}</div>
                 <div className="w-1/3 text-right text-gray-500">
@@ -283,6 +401,31 @@ export default function StudentDetailsPage() {
               </div>
             ))}
           </div>
+
+          {/* Exams Section */}
+          {grades.some(g => g.subject === selectedSubject && ['Dopunski rad', 'Popravni ispit', 'Razlikovni ispit'].includes(g.element)) && (
+            <>
+              <div className="p-3 flex justify-between items-center bg-gray-50 border-b border-gray-200 mt-4">
+                <div className="font-bold text-sm">Razlikovni / Dopunski / Popravni ispiti</div>
+                <div className="flex gap-4 text-sm font-bold">
+                  <span>Razred</span>
+                  <span>Datum</span>
+                </div>
+              </div>
+              <div className="p-3">
+                {grades.filter(g => g.subject === selectedSubject && ['Dopunski rad', 'Popravni ispit', 'Razlikovni ispit'].includes(g.element)).map(g => (
+                  <div key={g.id} className="text-sm border-b border-gray-100 py-2 flex justify-between items-center">
+                    <div className="w-1/4 font-bold text-gray-700">{g.element}</div>
+                    <div className="w-1/2">{g.note}</div>
+                    <div className="w-1/4 text-right flex justify-end gap-4 items-center">
+                      <span className="font-bold text-lg">{g.grade}</span>
+                      <span className="text-gray-500">{new Date(g.date_created).toLocaleDateString('hr-HR')}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -316,7 +459,12 @@ export default function StudentDetailsPage() {
               <div className="border border-red-300 p-4 mb-4 bg-red-50">
                 <div className="flex items-center gap-4 mb-4">
                   <label className="text-sm w-32">Datum ocjene:</label>
-                  <input type="text" value={new Date().toLocaleDateString('hr-HR')} readOnly className="border border-gray-300 p-1 text-sm w-32 bg-gray-100" />
+                  <input 
+                    type="date" 
+                    value={gradeDate} 
+                    onChange={(e) => setGradeDate(e.target.value)}
+                    className="border border-gray-300 p-1 text-sm w-36 bg-white" 
+                  />
                   
                   <label className="text-sm ml-8">Usmena/pisana provjera:</label>
                   <div className="flex border border-gray-300">
@@ -330,6 +478,41 @@ export default function StudentDetailsPage() {
                     >Ne</button>
                   </div>
                 </div>
+
+                {['Hrvatski jezik', 'Matematika', 'Geografija', 'Povijest', 'Biologija'].includes(selectedSubject || '') && (
+                  <div className="flex items-center gap-4 mt-4 pt-4 border-t border-red-200">
+                    <label className="text-sm w-32">Oznaka OO ishoda:</label>
+                    <select 
+                      className="border border-gray-300 p-1 text-sm flex-1 bg-white"
+                      onChange={(e) => {
+                        if (e.target.value && !outcomes.includes(e.target.value)) {
+                          setOutcomes([...outcomes, e.target.value]);
+                        }
+                      }}
+                      value=""
+                    >
+                      <option value="">-- odaberite ishode --</option>
+                      <option value="OŠ HJ A.1.1.">OŠ HJ A.1.1. - razgovara u skladu sa svojim interesima</option>
+                      <option value="OŠ HJ A.1.2.">OŠ HJ A.1.2. - sluša tekst i izdvaja ključne riječi</option>
+                      <option value="OŠ MAT A.1.1.">OŠ MAT A.1.1. - opisuje i prikazuje količine</option>
+                      <option value="OŠ MAT A.1.2.">OŠ MAT A.1.2. - zbraja i oduzima do 20</option>
+                    </select>
+                  </div>
+                )}
+                
+                {outcomes.length > 0 && (
+                  <div className="mt-2 pl-36">
+                    {outcomes.map(outcome => (
+                      <div key={outcome} className="flex items-center gap-2 text-sm mb-1 bg-white p-1 border border-gray-200">
+                        <span className="font-bold">{outcome}</span>
+                        <button 
+                          onClick={() => setOutcomes(outcomes.filter(o => o !== outcome))}
+                          className="text-red-500 ml-auto hover:text-red-700"
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="mb-6 border border-red-300 p-1">
@@ -360,6 +543,129 @@ export default function StudentDetailsPage() {
                   className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-8 py-2 border border-red-400 disabled:opacity-50"
                 >
                   {saving ? 'Spremanje...' : (editingGradeId ? 'Spremi promjene' : 'Unesi')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Final Grade Modal */}
+      {showFinalGradeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-2xl shadow-xl">
+            <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
+              <h3 className="font-medium">Unos zaključne ocjene</h3>
+              <button onClick={() => setShowFinalGradeModal(false)} className="text-white hover:text-gray-300">✕</button>
+            </div>
+            
+            <div className="p-6">
+              <div className="text-center mb-6 text-sm font-bold">
+                {selectedSubject} - zaključna ocjena za drugo polugodište
+              </div>
+
+              <div className="flex justify-center gap-4 mb-6">
+                {[1, 2, 3, 4, 5].map(grade => (
+                  <button 
+                    key={grade}
+                    onClick={() => setFinalGrade(grade)}
+                    className={`w-12 h-12 border ${finalGrade === grade ? 'border-blue-500 bg-blue-100' : 'border-gray-300'} text-lg font-medium hover:bg-gray-50`}
+                  >
+                    {grade}
+                  </button>
+                ))}
+              </div>
+              
+              <div className="flex justify-center gap-4 mb-8">
+                {['Neocijenjen', 'Oslobođen', 'Odrađeno', 'Neodrađeno'].map(status => (
+                  <button 
+                    key={status}
+                    onClick={() => setFinalGrade(status)}
+                    className={`px-4 py-2 border ${finalGrade === status ? 'border-blue-500 bg-blue-100' : 'border-gray-300'} text-sm font-medium hover:bg-gray-50`}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex justify-center">
+                <button 
+                  onClick={handleSaveFinalGrade}
+                  disabled={saving || !finalGrade}
+                  className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-12 py-2 border border-red-400 disabled:opacity-50"
+                >
+                  {saving ? 'Spremanje...' : 'Unesi'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Exam Modal */}
+      {showExamModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white w-full max-w-2xl shadow-xl">
+            <div className="bg-[#1a365d] text-white p-3 flex justify-between items-center">
+              <h3 className="font-medium">Popravni rokovi / Ispiti</h3>
+              <button onClick={() => setShowExamModal(false)} className="text-white hover:text-gray-300">✕</button>
+            </div>
+            
+            <div className="p-6 bg-red-50 border border-red-300 m-4">
+              <div className="flex items-center gap-4 mb-4">
+                <label className="text-sm w-24 font-bold">Predmet:</label>
+                <span className="text-sm">{selectedSubject}</span>
+              </div>
+              
+              <div className="flex items-center gap-4 mb-4">
+                <label className="text-sm w-24 font-bold">Ispit:</label>
+                <select 
+                  value={examType}
+                  onChange={(e) => setExamType(e.target.value)}
+                  className="border border-gray-300 p-1 text-sm bg-white"
+                >
+                  <option value="Dopunski rad">Dopunski rad</option>
+                  <option value="Popravni ispit">Popravni ispit</option>
+                  <option value="Razlikovni ispit">Razlikovni ispit</option>
+                </select>
+              </div>
+              
+              <div className="flex items-center gap-4 mb-4">
+                <label className="text-sm w-24 font-bold">Datum:</label>
+                <input 
+                  type="date" 
+                  value={examDate}
+                  onChange={(e) => setExamDate(e.target.value)}
+                  className="border border-gray-300 p-1 text-sm bg-white" 
+                />
+                
+                <label className="text-sm ml-4 font-bold">Ocjena:</label>
+                <select 
+                  value={examGrade || ''}
+                  onChange={(e) => setExamGrade(Number(e.target.value))}
+                  className="border border-gray-300 p-1 text-sm bg-white"
+                >
+                  <option value="">-</option>
+                  {[1, 2, 3, 4, 5].map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-sm font-bold mb-1">Bilješka:</label>
+                <textarea 
+                  value={examNote}
+                  onChange={(e) => setExamNote(e.target.value)}
+                  className="w-full border border-gray-300 h-20 p-2 text-sm bg-white"
+                  placeholder="Unesite bilješku..."
+                ></textarea>
+              </div>
+
+              <div className="flex justify-center mt-6">
+                <button 
+                  onClick={handleSaveExam}
+                  disabled={saving || !examGrade}
+                  className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-8 py-2 border border-red-400 disabled:opacity-50"
+                >
+                  {saving ? 'Spremanje...' : 'Unesi'}
                 </button>
               </div>
             </div>

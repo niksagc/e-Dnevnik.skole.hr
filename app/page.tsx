@@ -11,20 +11,34 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const hashPassword = async (password: string) => {
+    const msgBuffer = new TextEncoder().encode(password);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     
     try {
+      const hashedPassword = await hashPassword(password);
+      
       const { data: user, error: dbError } = await supabase
         .from('users')
         .select('*')
         .eq('email', username)
-        .eq('password', password)
         .single();
       
       if (dbError || !user) {
+        setError('Pogrešno korisničko ime ili lozinka.');
+        setLoading(false);
+        return;
+      }
+
+      if (user.password !== password && user.password !== hashedPassword) {
         setError('Pogrešno korisničko ime ili lozinka.');
         setLoading(false);
         return;
