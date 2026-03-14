@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { collection, getDocs, query, where, orderBy, writeBatch, doc } from 'firebase/firestore';
 import { subjects, evaluationElements } from '@/lib/mock-data';
 
 export default function GrupniUnosPage() {
@@ -26,19 +27,21 @@ export default function GrupniUnosPage() {
 
   useEffect(() => {
     const fetchStudents = async () => {
-      const { data } = await supabase
-        .from('students')
-        .select('*')
-        .eq('class_id', classId)
-        .order('name');
-      
-      if (data) {
-        setStudents(data);
-        const initialGrades: Record<string, { grade: number | null, note: string }> = {};
-        data.forEach(s => {
-          initialGrades[s.id] = { grade: null, note: '' };
-        });
-        setStudentGrades(initialGrades);
+      try {
+        const studentsQuery = query(collection(db, 'students'), where('class_id', '==', classId), orderBy('name'));
+        const studentsSnapshot = await getDocs(studentsQuery);
+        const data = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        if (data) {
+          setStudents(data);
+          const initialGrades: Record<string, { grade: number | null, note: string }> = {};
+          data.forEach(s => {
+            initialGrades[s.id] = { grade: null, note: '' };
+          });
+          setStudentGrades(initialGrades);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'students');
       }
     };
     
@@ -70,7 +73,7 @@ export default function GrupniUnosPage() {
     setStudentGrades(prev => {
       const next = { ...prev };
       Object.keys(next).forEach(id => {
-        if (next[id].grade !== null) {
+        if (next[id].grade !== null || entryType === 'biljeske') {
           next[id] = { ...next[id], note: globalNote };
         }
       });
@@ -94,8 +97,15 @@ export default function GrupniUnosPage() {
       }));
 
     if (gradesToInsert.length > 0) {
-      const { error } = await supabase.from('grades').insert(gradesToInsert);
-      if (error) {
+      try {
+        const batch = writeBatch(db);
+        gradesToInsert.forEach(grade => {
+          const newGradeRef = doc(collection(db, 'grades'));
+          batch.set(newGradeRef, grade);
+        });
+        await batch.commit();
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'grades/batch');
         alert('Greška pri spremanju.');
         setSaving(false);
         return;

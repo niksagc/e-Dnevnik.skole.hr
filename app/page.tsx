@@ -1,118 +1,112 @@
 'use client';
 
-import { useState } from 'react';
+import Image from 'next/image';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { auth, db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const hashPassword = async (password: string) => {
-    const msgBuffer = new TextEncoder().encode(password);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  const checkUserRoleAndRedirect = useCallback(async (user: any) => {
     setLoading(true);
-    
     try {
-      const hashedPassword = await hashPassword(password);
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
       
-      const { data: user, error: dbError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', username)
-        .single();
-      
-      if (dbError || !user) {
-        setError('Pogrešno korisničko ime ili lozinka.');
-        setLoading(false);
-        return;
+      let userData;
+      if (userDoc.exists()) {
+        userData = userDoc.data();
+      } else {
+        // Create new user record if it doesn't exist
+        const isDefaultAdmin = user.email === 'nikoladuric025@gmail.com';
+        userData = {
+          email: user.email,
+          name: user.displayName || '',
+          role: isDefaultAdmin ? 'admin' : 'teacher', // Default to teacher for now, or student
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(userDocRef, userData);
       }
 
-      if (user.password !== password && user.password !== hashedPassword) {
-        setError('Pogrešno korisničko ime ili lozinka.');
-        setLoading(false);
-        return;
-      }
-
-      // Spremamo korisnika u lokalnu memoriju za simulaciju sesije
-      localStorage.setItem('currentUser', JSON.stringify(user));
+      // Spremamo korisnika u lokalnu memoriju za simulaciju sesije (legacy support)
+      localStorage.setItem('currentUser', JSON.stringify({ ...userData, id: user.uid }));
       
       // Preusmjeravanje ovisno o ulozi
-      if (user.role === 'admin' || user.role === 'teacher') {
+      if (userData.role === 'admin' || userData.role === 'teacher') {
         router.push('/skole');
-      } else if (user.role === 'student') {
+      } else if (userData.role === 'student') {
         router.push('/ucenik');
-      } else if (user.role === 'parent') {
+      } else if (userData.role === 'parent') {
         router.push('/roditelj');
       }
     } catch (err) {
-      setError('Došlo je do pogreške pri spajanju na bazu.');
+      console.error('Error checking user role:', err);
+      setError('Došlo je do pogreške pri dohvaćanju podataka korisnika.');
     } finally {
+      setLoading(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        checkUserRoleAndRedirect(user);
+      }
+    });
+    return () => unsubscribe();
+  }, [checkUserRoleAndRedirect]);
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    setLoading(true);
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      // onAuthStateChanged will handle the redirect
+    } catch (err: any) {
+      console.error('Login error:', err);
+      setError('Došlo je do pogreške pri prijavi s Google računom.');
       setLoading(false);
     }
   };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-white">
-      <div className="w-full max-w-md p-8">
-        <h1 className="text-3xl font-normal text-center mb-10 text-gray-800">Dobrodošli</h1>
+      <div className="w-full max-w-md p-8 text-center">
+        <h1 className="text-4xl font-light mb-2 text-gray-800">e-Dnevnik</h1>
+        <p className="text-gray-500 mb-10">Prijavite se u sustav</p>
         
         {error && (
-          <div className="mb-6 p-3 bg-red-100 border border-red-400 text-red-700 text-sm text-center">
+          <div className="mb-6 p-3 bg-red-100 border border-red-400 text-red-700 text-sm">
             {error}
           </div>
         )}
         
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-4 text-sm text-gray-700">Korisničko ime:</label>
-            <input 
-              type="text" 
-              className="flex-1 border border-gray-300 p-2 focus:outline-none focus:border-blue-500"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
+        <div className="space-y-4">
+          <button 
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-3 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-3 px-4 rounded-lg shadow-sm transition-all disabled:opacity-50"
+          >
+            <Image 
+              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
+              alt="Google" 
+              width={20} 
+              height={20} 
+              className="w-5 h-5" 
+              referrerPolicy="no-referrer"
             />
-          </div>
-          
-          <div className="flex items-center">
-            <label className="w-32 text-right pr-4 text-sm text-gray-700">Lozinka:</label>
-            <input 
-              type="password" 
-              className="flex-1 border border-gray-300 p-2 focus:outline-none focus:border-blue-500"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
-          
-          <div className="flex justify-end pt-4">
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="w-full ml-32 bg-[#3b5998] hover:bg-[#2d4373] text-white py-2 px-4 transition-colors disabled:opacity-50"
-            >
-              {loading ? 'PRIJAVA...' : 'PRIJAVA'}
-            </button>
-          </div>
-        </form>
+            <span>{loading ? 'PRIJAVA...' : 'Prijavi se putem Google-a'}</span>
+          </button>
+        </div>
         
-        <div className="mt-8 text-xs text-gray-500 text-center border-t pt-4">
-          <p>Dostupni testni računi (nakon što pokrenete SQL skriptu):</p>
-          <p>Admin: nikola.duric2@skole.hr / 123410122005</p>
-          <p>Nastavnik: marko.kovacevic@skole.hr / 123456</p>
-          <p>Učenik: mario.kovac@skole.hr / 123456</p>
-          <p>Roditelj: marica.kovac@gmail.com / 123456</p>
+        <div className="mt-12 text-xs text-gray-400">
+          <p>&copy; 2026 e-Dnevnik Sustav. Sva prava pridržana.</p>
         </div>
       </div>
     </div>

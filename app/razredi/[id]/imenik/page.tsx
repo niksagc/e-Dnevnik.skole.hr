@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { collection, getDocs, query, where, orderBy, doc, getDoc, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { TriangleAlert, Clock, Shuffle, Edit2, X } from 'lucide-react';
 
 export default function ImenikPage() {
@@ -24,75 +25,88 @@ export default function ImenikPage() {
   const [isHeadTeacher, setIsHeadTeacher] = useState(false);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    const localAbsences = JSON.parse(localStorage.getItem('demo_absences') || '[]');
-    setAbsences(localAbsences);
+    const init = async () => {
+      const storedUser = localStorage.getItem('currentUser');
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      }
+    };
+    init();
   }, []);
 
   useEffect(() => {
     const fetchStudentsAndParents = async () => {
-      const { data: studentsData } = await supabase
-        .from('students')
-        .select('*')
-        .eq('class_id', classId)
-        .order('name');
-      
-      if (studentsData) setStudents(studentsData);
+      try {
+        // Fetch students
+        const studentsQuery = query(collection(db, 'students'), where('class_id', '==', classId), orderBy('name'));
+        const studentsSnapshot = await getDocs(studentsQuery);
+        const studentsList = studentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setStudents(studentsList);
 
-      const { data: parentsData } = await supabase
-        .from('users')
-        .select('*')
-        .eq('role', 'parent');
-      
-      if (parentsData) setParents(parentsData);
+        // Fetch parents
+        const parentsQuery = query(collection(db, 'users'), where('role', '==', 'parent'));
+        const parentsSnapshot = await getDocs(parentsQuery);
+        const parentsList = parentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setParents(parentsList);
 
-      const { data: classData } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('id', classId)
-        .single();
-      
-      if (classData && user) {
-        // Check if current user is head teacher
-        const localUserNames = JSON.parse(localStorage.getItem('demo_user_names') || '{}');
-        const currentUserName = localUserNames[user.id] || user.email;
-        if (classData.head_teacher === currentUserName || classData.head_teacher === user.email) {
-          setIsHeadTeacher(true);
+        // Fetch class info
+        const classDoc = await getDoc(doc(db, 'classes', classId));
+        if (classDoc.exists() && user) {
+          const classData = classDoc.data();
+          if (classData.head_teacher_id === user.id || classData.head_teacher === user.email) {
+            setIsHeadTeacher(true);
+          }
         }
-      }
 
-      setLoading(false);
+        // Fetch absences
+        const absencesSnapshot = await getDocs(collection(db, 'absences'));
+        const absencesList = absencesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAbsences(absencesList);
+
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'students/parents/classes/absences');
+      } finally {
+        setLoading(false);
+      }
     };
     if (user) fetchStudentsAndParents();
   }, [classId, user]);
 
-  const handleAddAbsence = (e: React.FormEvent) => {
+  const handleAddAbsence = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudentForAbsence) return;
 
-    const newAbsence = {
-      id: Date.now().toString(),
-      student_id: selectedStudentForAbsence.id,
-      date: newAbsenceDate,
-      hours: newAbsenceHours,
-      reason: newAbsenceReason,
-      isJustified: false
-    };
+    try {
+      const newAbsence = {
+        student_id: selectedStudentForAbsence.id,
+        date: newAbsenceDate,
+        hours: newAbsenceHours,
+        reason: newAbsenceReason,
+        isJustified: false,
+        createdAt: new Date().toISOString()
+      };
 
-    const updated = [...absences, newAbsence];
-    setAbsences(updated);
-    localStorage.setItem('demo_absences', JSON.stringify(updated));
-    setNewAbsenceReason('');
-    alert('Izostanak zabilježen.');
+      const docRef = await addDoc(collection(db, 'absences'), newAbsence);
+      setAbsences([...absences, { id: docRef.id, ...newAbsence }]);
+      setNewAbsenceReason('');
+      alert('Izostanak zabilježen.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'absences');
+    }
   };
 
-  const toggleJustify = (absenceId: string) => {
-    const updated = absences.map(a => a.id === absenceId ? { ...a, isJustified: !a.isJustified } : a);
-    setAbsences(updated);
-    localStorage.setItem('demo_absences', JSON.stringify(updated));
+  const toggleJustify = async (absenceId: string) => {
+    const absence = absences.find(a => a.id === absenceId);
+    if (!absence) return;
+
+    try {
+      await updateDoc(doc(db, 'absences', absenceId), {
+        isJustified: !absence.isJustified
+      });
+      setAbsences(absences.map(a => a.id === absenceId ? { ...a, isJustified: !absence.isJustified } : a));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `absences/${absenceId}`);
+    }
   };
 
   const handleSaveStudent = async (e: React.FormEvent) => {
@@ -100,44 +114,56 @@ export default function ImenikPage() {
     if (!editingStudent) return;
 
     setLoading(true);
-    const { error: studentError } = await supabase
-      .from('students')
-      .update({
+    try {
+      await updateDoc(doc(db, 'students', editingStudent.id), {
         name: editingStudent.name,
         program: editingStudent.program
-      })
-      .eq('id', editingStudent.id);
+      });
 
-    if (selectedParentId) {
-      // First remove this student from any other parent
-      await supabase.from('users').update({ student_id: null }).eq('student_id', editingStudent.id);
-      // Then assign to new parent
-      await supabase.from('users').update({ student_id: editingStudent.id }).eq('id', selectedParentId);
-    } else {
-      // Remove parent assignment
-      await supabase.from('users').update({ student_id: null }).eq('student_id', editingStudent.id);
-    }
+      // Handle parent assignment
+      if (selectedParentId) {
+        // Find if any other parent has this student
+        const otherParentsQuery = query(collection(db, 'users'), where('student_id', '==', editingStudent.id));
+        const otherParentsSnapshot = await getDocs(otherParentsQuery);
+        for (const parentDoc of otherParentsSnapshot.docs) {
+          await updateDoc(doc(db, 'users', parentDoc.id), { student_id: null });
+        }
+        // Assign to new parent
+        await updateDoc(doc(db, 'users', selectedParentId), { student_id: editingStudent.id });
+      } else {
+        // Remove parent assignment
+        const otherParentsQuery = query(collection(db, 'users'), where('student_id', '==', editingStudent.id));
+        const otherParentsSnapshot = await getDocs(otherParentsQuery);
+        for (const parentDoc of otherParentsSnapshot.docs) {
+          await updateDoc(doc(db, 'users', parentDoc.id), { student_id: null });
+        }
+      }
 
-    if (!studentError) {
       setStudents(students.map(s => s.id === editingStudent.id ? editingStudent : s));
       setEditingStudent(null);
       alert('Podaci uspješno spremljeni.');
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `students/${editingStudent.id}`);
       alert('Greška pri spremanju podataka.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleEditClick = async (e: React.MouseEvent, student: any) => {
     e.stopPropagation();
     setEditingStudent({ ...student });
     
-    // Find current parent
-    const { data } = await supabase.from('users').select('id').eq('student_id', student.id).single();
-    if (data) {
-      setSelectedParentId(data.id);
-    } else {
-      setSelectedParentId('');
+    try {
+      const parentQuery = query(collection(db, 'users'), where('student_id', '==', student.id));
+      const parentSnapshot = await getDocs(parentQuery);
+      if (!parentSnapshot.empty) {
+        setSelectedParentId(parentSnapshot.docs[0].id);
+      } else {
+        setSelectedParentId('');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, 'users/parent');
     }
   };
 

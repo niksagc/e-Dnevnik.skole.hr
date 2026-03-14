@@ -2,7 +2,18 @@
 
 import { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, Edit2, Users, Plus, X, Trash2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { db, auth, handleFirestoreError } from '@/lib/firebase';
+import { collection, query, getDocs, getDoc, doc, addDoc, deleteDoc, updateDoc, orderBy, where, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
 
 interface WorkWeek {
   id: string;
@@ -54,58 +65,81 @@ export default function DnevnikRadaPage() {
   const [lessonNote, setLessonNote] = useState('');
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
       if (authUser) {
-        const { data } = await supabase.from('users').select('*').eq('email', authUser.email).single();
-        setUser(data);
-        
-        // Load teacher subjects
-        if (data) {
-          const localSubjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
-          const localSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
-          const assignedSubjectIds = localSubjectTeachers
-            .filter((st: any) => st.teacher_id === data.id)
-            .map((st: any) => st.subject_id);
-          
-          const assignedSubjects = localSubjects.filter((s: any) => assignedSubjectIds.includes(s.id));
-          setTeacherSubjects(assignedSubjects);
-          if (assignedSubjects.length > 0) {
-            setLessonSubject(assignedSubjects[0].name);
+        try {
+          const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+          if (userDoc.exists()) {
+            const userData = { id: userDoc.id, ...userDoc.data() };
+            setUser(userData);
+            
+            // Load teacher subjects
+            const localSubjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
+            const localSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
+            const assignedSubjectIds = localSubjectTeachers
+              .filter((st: any) => st.teacher_id === userData.id)
+              .map((st: any) => st.subject_id);
+            
+            const assignedSubjects = localSubjects.filter((s: any) => assignedSubjectIds.includes(s.id));
+            setTeacherSubjects(assignedSubjects);
+            if (assignedSubjects.length > 0) {
+              setLessonSubject(assignedSubjects[0].name);
+            }
           }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${authUser.uid}`);
         }
       }
-    };
-    fetchUser();
-    // Load from localStorage or set initial mock
-    const saved = localStorage.getItem('dnevnik_weeks');
-    if (saved) {
-      setWeeks(JSON.parse(saved));
-    } else {
-      const initialWeeks: WorkWeek[] = [
-        {
-          id: '1',
-          number: 1,
-          shift: 'ujutro',
-          startDate: '2024-09-02',
-          endDate: '2024-09-06',
-          days: [
-            { date: '2024-09-02', name: 'ponedjeljak', isWorkingDay: true, lessons: [] },
-            { date: '2024-09-03', name: 'utorak', isWorkingDay: true, lessons: [] },
-            { date: '2024-09-04', name: 'srijeda', isWorkingDay: true, lessons: [] },
-            { date: '2024-09-05', name: 'četvrtak', isWorkingDay: true, lessons: [] },
-            { date: '2024-09-06', name: 'petak', isWorkingDay: true, lessons: [] },
-          ]
+
+      // Load from Firestore
+      try {
+        const q = query(collection(db, 'dnevnik_weeks'), orderBy('number', 'desc'));
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+          const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WorkWeek));
+          setWeeks(data);
+        } else {
+          // Initial mock if empty
+          const initialWeeks: WorkWeek[] = [
+            {
+              id: '1',
+              number: 1,
+              shift: 'ujutro',
+              startDate: '2024-09-02',
+              endDate: '2024-09-06',
+              days: [
+                { date: '2024-09-02', name: 'ponedjeljak', isWorkingDay: true, lessons: [] },
+                { date: '2024-09-03', name: 'utorak', isWorkingDay: true, lessons: [] },
+                { date: '2024-09-04', name: 'srijeda', isWorkingDay: true, lessons: [] },
+                { date: '2024-09-05', name: 'četvrtak', isWorkingDay: true, lessons: [] },
+                { date: '2024-09-06', name: 'petak', isWorkingDay: true, lessons: [] },
+              ]
+            }
+          ];
+          setWeeks(initialWeeks);
+          // Optionally save initial mock to Firestore
+          // await setDoc(doc(db, 'dnevnik_weeks', '1'), initialWeeks[0]);
         }
-      ];
-      setWeeks(initialWeeks);
-      localStorage.setItem('dnevnik_weeks', JSON.stringify(initialWeeks));
-    }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'dnevnik_weeks');
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
-  const saveWeeks = (newWeeks: WorkWeek[]) => {
+  const saveWeeks = async (newWeeks: WorkWeek[]) => {
     setWeeks(newWeeks);
-    localStorage.setItem('dnevnik_weeks', JSON.stringify(newWeeks));
+    // In a real app, we'd only save the changed week.
+    // For simplicity here, we'll save the first one if it's new/updated.
+    // This is a bit of a hack to match the previous localStorage logic.
+    if (newWeeks.length > 0) {
+      try {
+        const weekToSave = newWeeks[0];
+        await setDoc(doc(db, 'dnevnik_weeks', weekToSave.id), weekToSave);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'dnevnik_weeks');
+      }
+    }
   };
 
   const handleAddWeek = () => {
@@ -134,7 +168,7 @@ export default function DnevnikRadaPage() {
     setShowAddWeekModal(false);
   };
 
-  const handleAddLesson = () => {
+  const handleAddLesson = async () => {
     if (!selectedWeek || !selectedDay) return;
 
     const blockId = Date.now().toString();
@@ -177,6 +211,16 @@ export default function DnevnikRadaPage() {
 
     saveWeeks(updatedWeeks);
     
+    // Update Firestore for the specific week
+    try {
+      const weekToUpdate = updatedWeeks.find(w => w.id === selectedWeek.id);
+      if (weekToUpdate) {
+        await setDoc(doc(db, 'dnevnik_weeks', weekToUpdate.id), weekToUpdate);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `dnevnik_weeks/${selectedWeek.id}`);
+    }
+    
     // Update selected day reference
     const updatedWeek = updatedWeeks.find(w => w.id === selectedWeek.id);
     if (updatedWeek) {
@@ -191,7 +235,7 @@ export default function DnevnikRadaPage() {
     setLessonBlockHours(1);
   };
 
-  const handleDeleteLesson = (lessonId: string) => {
+  const handleDeleteLesson = async (lessonId: string) => {
     if (!selectedWeek || !selectedDay) return;
     if (!window.confirm('Jeste li sigurni da želite obrisati ovaj sat?')) return;
 
@@ -211,6 +255,17 @@ export default function DnevnikRadaPage() {
     });
 
     saveWeeks(updatedWeeks);
+    
+    // Update Firestore for the specific week
+    try {
+      const weekToUpdate = updatedWeeks.find(w => w.id === selectedWeek.id);
+      if (weekToUpdate) {
+        await setDoc(doc(db, 'dnevnik_weeks', weekToUpdate.id), weekToUpdate);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `dnevnik_weeks/${selectedWeek.id}`);
+    }
+
     const updatedWeek = updatedWeeks.find(w => w.id === selectedWeek.id);
     if (updatedWeek) {
       setSelectedWeek(updatedWeek);

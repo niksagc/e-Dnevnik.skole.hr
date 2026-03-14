@@ -2,27 +2,33 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Menu, X, LogOut, User, Settings, BookOpen } from 'lucide-react';
+import { Menu, X, LogOut, User, Settings, BookOpen, LayoutDashboard } from 'lucide-react';
 
 export default function HamburgerMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [schoolId, setSchoolId] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    } else {
-      setUser(null);
-    }
+    const init = async () => {
+      const storedUser = localStorage.getItem('currentUser');
+      if (storedUser) {
+        setUser(JSON.parse(storedUser));
+      } else {
+        setUser(null);
+      }
+      setSchoolId(localStorage.getItem('currentSchoolId'));
+    };
+    init();
   }, [pathname]); // Re-check on route change
 
   if (!user || pathname === '/') return null; // Don't show on login page
 
   const handleLogout = () => {
     localStorage.removeItem('currentUser');
+    localStorage.removeItem('currentSchoolId');
     setIsOpen(false);
     router.push('/');
   };
@@ -47,15 +53,27 @@ export default function HamburgerMenu() {
             <button 
               onClick={() => {
                 setIsOpen(false);
-                if (user.role === 'admin') router.push('/razredi/1/administracija');
-                else if (user.role === 'teacher') router.push('/razredi');
+                if (user.role === 'admin') router.push('/skole');
+                else if (user.role === 'teacher') router.push('/skole');
                 else if (user.role === 'parent') router.push('/roditelj');
                 else if (user.role === 'student') router.push('/ucenik');
               }}
               className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             >
-              <BookOpen size={16} /> Početna
+              <BookOpen size={16} /> Početna (Škole)
             </button>
+
+            {schoolId && (
+              <button 
+                onClick={() => {
+                  setIsOpen(false);
+                  router.push(`/skole/${schoolId}/dashboard`);
+                }}
+                className="w-full text-left px-4 py-2 text-sm text-blue-700 font-medium hover:bg-blue-50 flex items-center gap-2"
+              >
+                <LayoutDashboard size={16} /> Dashboard škole
+              </button>
+            )}
             
             <button 
               onClick={() => {

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
 import { Lock } from 'lucide-react';
 
 export default function RazrediPage() {
@@ -13,9 +14,29 @@ export default function RazrediPage() {
 
   useEffect(() => {
     const fetchClasses = async () => {
-      const { data, error } = await supabase.from('classes').select('*');
-      if (data) setClasses(data);
-      setLoading(false);
+      const schoolId = localStorage.getItem('currentSchoolId');
+      
+      try {
+        const classesCollection = collection(db, 'classes');
+        let classesQuery;
+        
+        if (schoolId) {
+          classesQuery = query(classesCollection, where('school_id', '==', schoolId), orderBy('name'));
+        } else {
+          classesQuery = query(classesCollection, orderBy('name'));
+        }
+
+        const classesSnapshot = await getDocs(classesQuery);
+        const classesList = classesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setClasses(classesList);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.LIST, 'classes');
+      } finally {
+        setLoading(false);
+      }
     };
     fetchClasses();
   }, []);

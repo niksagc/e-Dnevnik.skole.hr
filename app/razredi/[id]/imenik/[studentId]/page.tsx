@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { collection, getDocs, query, where, doc, getDoc, updateDoc, addDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { ArrowLeft, ArrowRight, Shuffle, Trash2 } from 'lucide-react';
 import { subjects, evaluationElements } from '@/lib/mock-data';
 
@@ -41,27 +42,22 @@ export default function StudentDetailsPage() {
 
   useEffect(() => {
     const fetchStudentData = async () => {
-      const { data: studentData } = await supabase
-        .from('students')
-        .select('*')
-        .eq('id', studentId)
-        .single();
-      
-      if (studentData) setStudent(studentData);
+      try {
+        const studentDoc = await getDoc(doc(db, 'students', studentId));
+        if (studentDoc.exists()) {
+          setStudent({ id: studentDoc.id, ...studentDoc.data() });
+        }
 
-      const { data: allStudentsData } = await supabase
-        .from('students')
-        .select('id')
-        .eq('class_id', classId);
-        
-      if (allStudentsData) setAllStudents(allStudentsData);
+        const allStudentsQuery = query(collection(db, 'students'), where('class_id', '==', classId));
+        const allStudentsSnapshot = await getDocs(allStudentsQuery);
+        setAllStudents(allStudentsSnapshot.docs.map(doc => ({ id: doc.id })));
 
-      const { data: gradesData } = await supabase
-        .from('grades')
-        .select('*')
-        .eq('student_id', studentId);
-        
-      if (gradesData) setGrades(gradesData);
+        const gradesQuery = query(collection(db, 'grades'), where('student_id', '==', studentId));
+        const gradesSnapshot = await getDocs(gradesQuery);
+        setGrades(gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `students/${studentId}`);
+      }
     };
     
     fetchStudentData();
@@ -88,45 +84,38 @@ export default function StudentDetailsPage() {
       finalNote = note ? `${note} ${outcomesStr}` : outcomesStr;
     }
     
-    if (editingGradeId) {
-      const { data, error } = await supabase
-        .from('grades')
-        .update({
+    try {
+      if (editingGradeId) {
+        const gradeUpdate = {
           grade: newGrade,
           is_written: isWritten,
           note: finalNote,
           date_created: new Date(gradeDate).toISOString()
-        })
-        .eq('id', editingGradeId)
-        .select();
-        
-      if (!error && data) {
-        setGrades(grades.map(g => g.id === editingGradeId ? data[0] : g));
+        };
+        await updateDoc(doc(db, 'grades', editingGradeId), gradeUpdate);
+        setGrades(grades.map(g => g.id === editingGradeId ? { ...g, ...gradeUpdate } : g));
         setShowGradeModal(false);
       } else {
-        alert('Greška pri ažuriranju ocjene.');
-      }
-    } else {
-      const gradeData = {
-        student_id: studentId,
-        subject: selectedSubject,
-        element: selectedElement,
-        grade: newGrade,
-        is_written: isWritten,
-        note: finalNote,
-        date_created: new Date(gradeDate).toISOString()
-      };
+        const gradeData = {
+          student_id: studentId,
+          subject: selectedSubject,
+          element: selectedElement,
+          grade: newGrade,
+          is_written: isWritten,
+          note: finalNote,
+          date_created: new Date(gradeDate).toISOString()
+        };
 
-      const { data, error } = await supabase.from('grades').insert([gradeData]).select();
-      
-      if (!error && data) {
-        setGrades([...grades, data[0]]);
+        const docRef = await addDoc(collection(db, 'grades'), gradeData);
+        setGrades([...grades, { id: docRef.id, ...gradeData }]);
         setShowGradeModal(false);
-      } else {
-        alert('Greška pri spremanju ocjene.');
       }
+    } catch (error) {
+      handleFirestoreError(error, editingGradeId ? OperationType.UPDATE : OperationType.CREATE, 'grades');
+      alert('Greška pri spremanju ocjene.');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleDeleteGrade = async () => {
@@ -134,14 +123,16 @@ export default function StudentDetailsPage() {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovu ocjenu?')) return;
     
     setSaving(true);
-    const { error } = await supabase.from('grades').delete().eq('id', editingGradeId);
-    if (!error) {
+    try {
+      await deleteDoc(doc(db, 'grades', editingGradeId));
       setGrades(grades.filter(g => g.id !== editingGradeId));
       setShowGradeModal(false);
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `grades/${editingGradeId}`);
       alert('Greška pri brisanju ocjene.');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const openGradeModal = (element: string) => {
@@ -180,65 +171,65 @@ export default function StudentDetailsPage() {
     if (!finalGrade || !selectedSubject) return;
     setSaving(true);
     
-    // Check if final grade already exists
-    const existingFinalGrade = grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO');
-    
-    if (existingFinalGrade) {
-      const { data, error } = await supabase
-        .from('grades')
-        .update({ grade: typeof finalGrade === 'number' ? finalGrade : null, note: typeof finalGrade === 'string' ? finalGrade : '' })
-        .eq('id', existingFinalGrade.id)
-        .select();
-        
-      if (!error && data) {
-        setGrades(grades.map(g => g.id === existingFinalGrade.id ? data[0] : g));
-      }
-    } else {
-      const gradeData = {
-        student_id: studentId,
-        subject: selectedSubject,
-        element: 'ZAKLJUČNO',
-        grade: typeof finalGrade === 'number' ? finalGrade : null,
-        note: typeof finalGrade === 'string' ? finalGrade : '',
-        is_written: false,
-        date_created: new Date().toISOString()
-      };
+    try {
+      // Check if final grade already exists
+      const existingFinalGrade = grades.find(g => g.subject === selectedSubject && g.element === 'ZAKLJUČNO');
+      
+      if (existingFinalGrade) {
+        const gradeUpdate = { 
+          grade: typeof finalGrade === 'number' ? finalGrade : null, 
+          note: typeof finalGrade === 'string' ? finalGrade : '' 
+        };
+        await updateDoc(doc(db, 'grades', existingFinalGrade.id), gradeUpdate);
+        setGrades(grades.map(g => g.id === existingFinalGrade.id ? { ...g, ...gradeUpdate } : g));
+      } else {
+        const gradeData = {
+          student_id: studentId,
+          subject: selectedSubject,
+          element: 'ZAKLJUČNO',
+          grade: typeof finalGrade === 'number' ? finalGrade : null,
+          note: typeof finalGrade === 'string' ? finalGrade : '',
+          is_written: false,
+          date_created: new Date().toISOString()
+        };
 
-      const { data, error } = await supabase.from('grades').insert([gradeData]).select();
-      if (!error && data) {
-        setGrades([...grades, data[0]]);
+        const docRef = await addDoc(collection(db, 'grades'), gradeData);
+        setGrades([...grades, { id: docRef.id, ...gradeData }]);
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'grades/final');
+    } finally {
+      setSaving(false);
+      setShowFinalGradeModal(false);
     }
-    
-    setSaving(false);
-    setShowFinalGradeModal(false);
   };
 
   const handleSaveExam = async () => {
     if (!examGrade || !selectedSubject) return;
     setSaving(true);
     
-    const gradeData = {
-      student_id: studentId,
-      subject: selectedSubject,
-      element: examType,
-      grade: examGrade,
-      note: examNote,
-      is_written: false,
-      date_created: new Date(examDate).toISOString()
-    };
+    try {
+      const gradeData = {
+        student_id: studentId,
+        subject: selectedSubject,
+        element: examType,
+        grade: examGrade,
+        note: examNote,
+        is_written: false,
+        date_created: new Date(examDate).toISOString()
+      };
 
-    const { data, error } = await supabase.from('grades').insert([gradeData]).select();
-    if (!error && data) {
-      setGrades([...grades, data[0]]);
+      const docRef = await addDoc(collection(db, 'grades'), gradeData);
+      setGrades([...grades, { id: docRef.id, ...gradeData }]);
       setShowExamModal(false);
       setExamGrade(null);
       setExamNote('');
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'grades/exam');
       alert('Greška pri spremanju ispita.');
+    } finally {
+      setSaving(false);
     }
-    
-    setSaving(false);
   };
 
   const getMonthIndex = (dateString: string) => {

@@ -1,16 +1,39 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useState, useEffect, Suspense } from 'react';
+import { db, auth, handleFirestoreError } from '@/lib/firebase';
+import { collection, query, getDocs, getDoc, doc, addDoc, deleteDoc, updateDoc, orderBy, where, writeBatch } from 'firebase/firestore';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { onAuthStateChanged } from 'firebase/auth';
 
-export default function AdministracijaPage() {
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+function AdministracijaContent() {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const init = async () => {
+      const tab = searchParams.get('tab');
+      if (tab) {
+        setActiveTab(tab);
+      }
+    };
+    init();
+  }, [searchParams]);
 
   // New user form state
   const [newEmail, setNewEmail] = useState('');
@@ -44,11 +67,12 @@ export default function AdministracijaPage() {
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   const loadLocalData = () => {
-    const localSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
-    const localSubjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
+    const localSubjects = JSON.parse(localStorage.getItem(`demo_subjects_${schoolId}`) || '[]');
+    const localSubjectTeachers = JSON.parse(localStorage.getItem(`demo_subject_teachers_${schoolId}`) || '[]');
     const localSchools = JSON.parse(localStorage.getItem('demo_schools') || '[]');
-    const localAcademicYears = JSON.parse(localStorage.getItem('demo_academic_years') || '[]');
-    const localClassSubjects = JSON.parse(localStorage.getItem('demo_class_subjects') || '[]');
+    const localAcademicYears = JSON.parse(localStorage.getItem(`demo_academic_years_${schoolId}`) || '[]');
+    const localClassSubjects = JSON.parse(localStorage.getItem(`demo_class_subjects_${schoolId}`) || '[]');
     const localUserNames = JSON.parse(localStorage.getItem('demo_user_names') || '{}');
     
     setSubjects(localSubjects);
@@ -60,40 +84,48 @@ export default function AdministracijaPage() {
   };
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase.from('users').select('*').eq('email', user.email).single();
-        setUser(data);
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+          if (userDoc.exists()) {
+            setUser({ id: userDoc.id, ...userDoc.data() });
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${authUser.uid}`);
+        }
       }
-    };
-    fetchUser();
-    loadLocalData();
+      loadLocalData();
+    });
+    return () => unsubscribe();
   }, []);
 
   const handleAddSubject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubjectName) return;
     
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const newSubject = { id: Date.now().toString(), name: newSubjectName };
     const updatedSubjects = [...subjects, newSubject];
     setSubjects(updatedSubjects);
-    localStorage.setItem('demo_subjects', JSON.stringify(updatedSubjects));
+    localStorage.setItem(`demo_subjects_${schoolId}`, JSON.stringify(updatedSubjects));
     setNewSubjectName('');
     alert('Predmet uspješno dodan.');
   };
 
   const handleDeleteSubject = (id: string) => {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovaj predmet?')) return;
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const updatedSubjects = subjects.filter(s => s.id !== id);
     setSubjects(updatedSubjects);
-    localStorage.setItem('demo_subjects', JSON.stringify(updatedSubjects));
+    localStorage.setItem(`demo_subjects_${schoolId}`, JSON.stringify(updatedSubjects));
   };
 
   const handleAssignTeacher = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSubjectId || !newSubjectTeacherId) return;
     
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const newAssignment = { 
       id: Date.now().toString(), 
       subject_id: selectedSubjectId, 
@@ -101,7 +133,7 @@ export default function AdministracijaPage() {
     };
     const updatedAssignments = [...subjectTeachers, newAssignment];
     setSubjectTeachers(updatedAssignments);
-    localStorage.setItem('demo_subject_teachers', JSON.stringify(updatedAssignments));
+    localStorage.setItem(`demo_subject_teachers_${schoolId}`, JSON.stringify(updatedAssignments));
     setNewSubjectTeacherId('');
     setSelectedSubjectId('');
     alert('Nastavnik uspješno dodijeljen predmetu.');
@@ -109,9 +141,10 @@ export default function AdministracijaPage() {
 
   const handleDeleteAssignment = (id: string) => {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovu dodjelu?')) return;
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const updatedAssignments = subjectTeachers.filter(a => a.id !== id);
     setSubjectTeachers(updatedAssignments);
-    localStorage.setItem('demo_subject_teachers', JSON.stringify(updatedAssignments));
+    localStorage.setItem(`demo_subject_teachers_${schoolId}`, JSON.stringify(updatedAssignments));
   };
 
   const adminLinks = [
@@ -128,37 +161,70 @@ export default function AdministracijaPage() {
 
   const fetchUsers = async () => {
     setLoading(true);
-    const { data } = await supabase.from('users').select('*').order('role');
-    if (data) setUsers(data);
+    try {
+      const q = query(collection(db, 'users'), orderBy('role'));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUsers(data);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'users');
+    }
     setLoading(false);
   };
 
   const fetchStudents = async () => {
     setLoading(true);
-    const { data } = await supabase.from('students').select('*, classes(name)').order('name');
-    if (data) setStudents(data);
+    try {
+      const q = query(collection(db, 'students'), orderBy('name'));
+      const querySnapshot = await getDocs(q);
+      
+      // Fetch classes to get their names
+      const classesSnapshot = await getDocs(collection(db, 'classes'));
+      const classesMap = new Map(classesSnapshot.docs.map(doc => [doc.id, doc.data().name]));
+
+      const data = querySnapshot.docs.map(doc => {
+        const studentData = doc.data();
+        return { 
+          id: doc.id, 
+          ...studentData,
+          classes: { name: classesMap.get(studentData.class_id) || '-' }
+        };
+      });
+      setStudents(data);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'students');
+    }
     setLoading(false);
   };
 
   const fetchClasses = async () => {
     setLoading(true);
-    const { data } = await supabase.from('classes').select('*').order('name');
-    if (data) setClasses(data);
+    try {
+      const q = query(collection(db, 'classes'), orderBy('name'));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setClasses(data);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'classes');
+    }
     setLoading(false);
   };
 
   useEffect(() => {
-    if (activeTab === 'Korisnici') {
-      fetchUsers();
-    } else if (activeTab === 'Administracija učenika') {
-      fetchStudents();
-      fetchClasses();
-    } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred' || activeTab === 'Dodijeli predmete razredu') {
-      fetchClasses();
-      if (activeTab === 'Dodijeli predmete razredu') {
-        fetchUsers(); // To get teachers
+    const init = async () => {
+      if (activeTab === 'Korisnici') {
+        fetchUsers();
+      } else if (activeTab === 'Administracija učenika') {
+        fetchStudents();
+        fetchClasses();
+      } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred' || activeTab === 'Dodijeli predmete razredu') {
+        fetchClasses();
+        if (activeTab === 'Dodijeli predmete razredu') {
+          fetchUsers(); // To get teachers
+        }
       }
-    }
+    };
+    init();
   }, [activeTab]);
 
   const hashPassword = async (password: string) => {
@@ -173,19 +239,22 @@ export default function AdministracijaPage() {
     if (!newEmail || !newPassword) return;
     
     setLoading(true);
-    const hashedPassword = await hashPassword(newPassword);
-    
-    const { data, error } = await supabase.from('users').insert([
-      { email: newEmail, password: hashedPassword, role: newRole }
-    ]).select();
+    try {
+      // Note: In a real Firebase app, we'd use Firebase Auth to create the user.
+      // For this migration, we'll just add the metadata to Firestore.
+      // The user will need to sign up via Google or another method to actually log in.
+      const docRef = await addDoc(collection(db, 'users'), {
+        email: newEmail,
+        role: newRole,
+        createdAt: new Date().toISOString()
+      });
 
-    if (!error && data) {
-      const newUser = data[0];
+      const newUser = { id: docRef.id, email: newEmail, role: newRole };
       setUsers([...users, newUser]);
       
       // Save full name to local storage
       if (newFullName) {
-        const updatedNames = { ...userNames, [newUser.id]: newFullName };
+        const updatedNames = { ...userNames, [docRef.id]: newFullName };
         setUserNames(updatedNames);
         localStorage.setItem('demo_user_names', JSON.stringify(updatedNames));
       }
@@ -193,7 +262,8 @@ export default function AdministracijaPage() {
       setNewEmail('');
       setNewPassword('');
       setNewFullName('');
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'users');
       alert('Greška pri dodavanju korisnika.');
     }
     setLoading(false);
@@ -203,10 +273,11 @@ export default function AdministracijaPage() {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovog korisnika?')) return;
     
     setLoading(true);
-    const { error } = await supabase.from('users').delete().eq('id', id);
-    if (!error) {
+    try {
+      await deleteDoc(doc(db, 'users', id));
       setUsers(users.filter(u => u.id !== id));
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${id}`);
       alert('Greška pri brisanju korisnika.');
     }
     setLoading(false);
@@ -217,15 +288,23 @@ export default function AdministracijaPage() {
     if (!newStudentName || !newStudentClassId) return;
     
     setLoading(true);
-    const { data, error } = await supabase.from('students').insert([
-      { name: newStudentName, program: newStudentProgram, class_id: newStudentClassId }
-    ]).select('*, classes(name)');
+    try {
+      const studentData = { 
+        name: newStudentName, 
+        program: newStudentProgram, 
+        class_id: newStudentClassId 
+      };
+      const docRef = await addDoc(collection(db, 'students'), studentData);
 
-    if (!error && data) {
-      setStudents([...students, data[0]]);
+      // Fetch class name for UI
+      const classDoc = await getDoc(doc(db, 'classes', newStudentClassId));
+      const className = classDoc.exists() ? classDoc.data().name : '-';
+
+      setStudents([...students, { id: docRef.id, ...studentData, classes: { name: className } }]);
       setNewStudentName('');
       setNewStudentProgram('');
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'students');
       alert('Greška pri dodavanju učenika.');
     }
     setLoading(false);
@@ -235,10 +314,11 @@ export default function AdministracijaPage() {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovog učenika?')) return;
     
     setLoading(true);
-    const { error } = await supabase.from('students').delete().eq('id', id);
-    if (!error) {
+    try {
+      await deleteDoc(doc(db, 'students', id));
       setStudents(students.filter(s => s.id !== id));
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `students/${id}`);
       alert('Greška pri brisanju učenika.');
     }
     setLoading(false);
@@ -249,18 +329,22 @@ export default function AdministracijaPage() {
     if (!newClassName) return;
     
     setLoading(true);
-    // Hardcode school_id for demo purposes since we don't have a school selector
-    const schoolId = '11111111-1111-1111-1111-111111111111';
-    const { data, error } = await supabase.from('classes').insert([
-      { name: newClassName, program: newClassProgram, head_teacher: newClassHeadTeacher, school_id: schoolId }
-    ]).select();
+    try {
+      const schoolId = localStorage.getItem('currentSchoolId') || '11111111-1111-1111-1111-111111111111';
+      const classData = { 
+        name: newClassName, 
+        program: newClassProgram, 
+        head_teacher: newClassHeadTeacher, 
+        school_id: schoolId 
+      };
+      const docRef = await addDoc(collection(db, 'classes'), classData);
 
-    if (!error && data) {
-      setClasses([...classes, data[0]]);
+      setClasses([...classes, { id: docRef.id, ...classData }]);
       setNewClassName('');
       setNewClassProgram('');
       setNewClassHeadTeacher('');
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'classes');
       alert('Greška pri dodavanju razreda.');
     }
     setLoading(false);
@@ -270,10 +354,11 @@ export default function AdministracijaPage() {
     if (!window.confirm('Jeste li sigurni da želite obrisati ovaj razred?')) return;
     
     setLoading(true);
-    const { error } = await supabase.from('classes').delete().eq('id', id);
-    if (!error) {
+    try {
+      await deleteDoc(doc(db, 'classes', id));
       setClasses(classes.filter(c => c.id !== id));
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `classes/${id}`);
       alert('Greška pri brisanju razreda.');
     }
     setLoading(false);
@@ -291,31 +376,43 @@ export default function AdministracijaPage() {
       return;
     }
     setLoading(true);
-    const { data } = await supabase.from('students').select('*').eq('class_id', classId).order('name');
-    if (data) setTransferStudents(data);
+    try {
+      const q = query(collection(db, 'students'), where('class_id', '==', classId), orderBy('name'));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setTransferStudents(data);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'students');
+    }
     setLoading(false);
   };
 
   useEffect(() => {
-    fetchTransferStudents(transferSourceClassId);
+    const init = async () => {
+      await fetchTransferStudents(transferSourceClassId);
+    };
+    init();
   }, [transferSourceClassId]);
 
   const handleTransferStudents = async () => {
     if (!transferTargetClassId || selectedTransferStudents.length === 0) return;
     
     setLoading(true);
-    const { error } = await supabase
-      .from('students')
-      .update({ class_id: transferTargetClassId })
-      .in('id', selectedTransferStudents);
+    try {
+      const batch = writeBatch(db);
+      selectedTransferStudents.forEach(studentId => {
+        const studentRef = doc(db, 'students', studentId);
+        batch.update(studentRef, { class_id: transferTargetClassId });
+      });
+      await batch.commit();
 
-    if (!error) {
       alert('Učenici su uspješno prebačeni.');
       setTransferSourceClassId('');
       setTransferTargetClassId('');
       setSelectedTransferStudents([]);
       setTransferStudents([]);
-    } else {
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'students');
       alert('Greška pri prebacivanju učenika.');
     }
     setLoading(false);
@@ -334,10 +431,11 @@ export default function AdministracijaPage() {
   const handleAddAcademicYear = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAcademicYearName) return;
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const newYear = { id: Date.now().toString(), name: newAcademicYearName };
     const updated = [...academicYears, newYear];
     setAcademicYears(updated);
-    localStorage.setItem('demo_academic_years', JSON.stringify(updated));
+    localStorage.setItem(`demo_academic_years_${schoolId}`, JSON.stringify(updated));
     setNewAcademicYearName('');
   };
 
@@ -345,6 +443,7 @@ export default function AdministracijaPage() {
     e.preventDefault();
     if (!selectedClassIdForSubjects || !selectedSubjectId || !newSubjectTeacherId) return;
     
+    const schoolId = localStorage.getItem('currentSchoolId') || 'global';
     const newAssignment = {
       id: Date.now().toString(),
       class_id: selectedClassIdForSubjects,
@@ -353,7 +452,7 @@ export default function AdministracijaPage() {
     };
     const updated = [...classSubjects, newAssignment];
     setClassSubjects(updated);
-    localStorage.setItem('demo_class_subjects', JSON.stringify(updated));
+    localStorage.setItem(`demo_class_subjects_${schoolId}`, JSON.stringify(updated));
     alert('Predmet i nastavnik uspješno dodijeljeni razredu.');
   };
 
@@ -416,9 +515,10 @@ export default function AdministracijaPage() {
             <div key={y.id} className="p-4 border-b border-gray-100 flex justify-between items-center">
               <span className="font-medium">{y.name}</span>
               <button onClick={() => {
+                const schoolId = localStorage.getItem('currentSchoolId') || 'global';
                 const updated = academicYears.filter(x => x.id !== y.id);
                 setAcademicYears(updated);
-                localStorage.setItem('demo_academic_years', JSON.stringify(updated));
+                localStorage.setItem(`demo_academic_years_${schoolId}`, JSON.stringify(updated));
               }} className="text-red-500"><Trash2 size={18} /></button>
             </div>
           ))}
@@ -1031,5 +1131,13 @@ export default function AdministracijaPage() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function AdministracijaPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Učitavanje...</div>}>
+      <AdministracijaContent />
+    </Suspense>
   );
 }

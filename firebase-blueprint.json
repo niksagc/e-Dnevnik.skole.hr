@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "Educational institution",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the school" },
+        "type": { "type": "string", "description": "Type of the school (e.g. Srednja škola)" }
+      },
+      "required": ["name", "type"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Application user (teacher, admin, parent, student)",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "teacher", "parent", "student"] },
+        "name": { "type": "string" },
+        "student_id": { "type": "string", "description": "Reference to student if role is parent or student" },
+        "school_id": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student in a class",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "class_id": { "type": "string" },
+        "school_id": { "type": "string" }
+      },
+      "required": ["name", "class_id", "school_id"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "School class (e.g. 1.A)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "school_id": { "type": "string" },
+        "head_teacher_id": { "type": "string" }
+      },
+      "required": ["name", "school_id"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "School subject",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "school_id": { "type": "string" }
+      },
+      "required": ["name", "school_id"]
+    },
+    "Grade": {
+      "title": "Grade",
+      "description": "Student grade for a subject",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "subject_id": { "type": "string" },
+        "value": { "type": "integer" },
+        "note": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "teacher_id": { "type": "string" },
+        "element_id": { "type": "string" }
+      },
+      "required": ["student_id", "subject_id", "value", "date"]
+    },
+    "Absence": {
+      "title": "Absence",
+      "description": "Student absence record",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "hours": { "type": "integer" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["unjustified", "justified", "pending"] }
+      },
+      "required": ["student_id", "date", "hours"]
+    }
+  },
+  "firestore": {
+    "schools": { "schema": "School", "description": "Collection of schools" },
+    "users": { "schema": "User", "description": "Collection of users" },
+    "students": { "schema": "Student", "description": "Collection of students" },
+    "classes": { "schema": "Class", "description": "Collection of classes" },
+    "subjects": { "schema": "Subject", "description": "Collection of subjects" },
+    "grades": { "schema": "Grade", "description": "Collection of grades" },
+    "absences": { "schema": "Absence", "description": "Collection of absences" }
+  }
+}

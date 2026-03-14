@@ -13,30 +13,33 @@ export default function MojiPredmetiPage() {
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (!storedUser) {
-      router.push('/');
-      return;
-    }
-    const parsedUser = JSON.parse(storedUser);
-    setUser(parsedUser);
+    const init = async () => {
+      const storedUser = localStorage.getItem('currentUser');
+      if (!storedUser) {
+        router.push('/');
+        return;
+      }
+      const parsedUser = JSON.parse(storedUser);
+      setUser(parsedUser);
 
-    const localUserNames = JSON.parse(localStorage.getItem('demo_user_names') || '{}');
-    const currentUserName = localUserNames[parsedUser.id] || parsedUser.email;
+      const localUserNames = JSON.parse(localStorage.getItem('demo_user_names') || '{}');
+      const currentUserName = localUserNames[parsedUser.id] || parsedUser.email;
 
-    const allSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
-    const subjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
-    
-    // Find subjects assigned to this teacher
-    const assignedSubjectIds = subjectTeachers
-      .filter((st: any) => st.teacherName === currentUserName || st.teacherName === parsedUser.email)
-      .map((st: any) => st.subjectId);
-    
-    const filteredSubjects = allSubjects.filter((s: any) => assignedSubjectIds.includes(s.id));
-    setMySubjects(filteredSubjects);
+      const allSubjects = JSON.parse(localStorage.getItem('demo_subjects') || '[]');
+      const subjectTeachers = JSON.parse(localStorage.getItem('demo_subject_teachers') || '[]');
+      
+      // Find subjects assigned to this teacher
+      const assignedSubjectIds = subjectTeachers
+        .filter((st: any) => st.teacherName === currentUserName || st.teacherName === parsedUser.email)
+        .map((st: any) => st.subjectId);
+      
+      const filteredSubjects = allSubjects.filter((s: any) => assignedSubjectIds.includes(s.id));
+      setMySubjects(filteredSubjects);
 
-    const storedElements = JSON.parse(localStorage.getItem('demo_evaluation_elements') || '[]');
-    setEvaluationElements(storedElements);
+      const storedElements = JSON.parse(localStorage.getItem('demo_evaluation_elements') || '[]');
+      setEvaluationElements(storedElements);
+    };
+    init();
   }, [router]);
 
   const handleAddElement = (e: React.FormEvent) => {
