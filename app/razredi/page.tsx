@@ -9,6 +9,7 @@ export default function RazrediPage() {
   const router = useRouter();
   const [classes, setClasses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeFilter, setActiveFilter] = useState('Svi');
 
   useEffect(() => {
     const fetchClasses = async () => {
@@ -27,6 +28,11 @@ export default function RazrediPage() {
       default: return 'bg-white hover:bg-gray-50';
     }
   };
+
+  const filteredClasses = classes.filter(cls => {
+    if (activeFilter === 'Svi') return true;
+    return cls.name.startsWith(activeFilter.replace('.', ''));
+  });
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-white pt-10">
@@ -59,7 +65,7 @@ export default function RazrediPage() {
           <div className="text-center p-4 text-gray-500">Učitavanje razreda...</div>
         ) : (
           <div className="border border-red-500 mb-8">
-            {classes.map((cls) => (
+            {filteredClasses.map((cls) => (
               <div 
                 key={cls.id}
                 onClick={() => router.push(`/razredi/${cls.id}/imenik`)}
@@ -70,8 +76,8 @@ export default function RazrediPage() {
                 <div className="text-right">{cls.program}</div>
               </div>
             ))}
-            {classes.length === 0 && (
-              <div className="p-4 text-gray-500 bg-white">Nema pronađenih razreda. Jeste li pokrenuli SQL skriptu u Supabaseu?</div>
+            {filteredClasses.length === 0 && (
+              <div className="p-4 text-gray-500 bg-white">Nema pronađenih razreda za odabrani filter.</div>
             )}
           </div>
         )}
@@ -83,7 +89,8 @@ export default function RazrediPage() {
             {['Svi', '1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', 'Grupe', 'OOS'].map((filter) => (
               <button 
                 key={filter}
-                className={`px-3 py-1 text-sm text-white ${filter === 'Svi' ? 'bg-[#5a6b9c]' : 'bg-[#4a5568] hover:bg-[#2d3748]'}`}
+                onClick={() => setActiveFilter(filter)}
+                className={`px-3 py-1 text-sm text-white ${activeFilter === filter ? 'bg-[#5a6b9c]' : 'bg-[#4a5568] hover:bg-[#2d3748]'}`}
               >
                 {filter}
               </button>

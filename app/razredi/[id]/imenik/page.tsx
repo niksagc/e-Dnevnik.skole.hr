@@ -26,11 +26,21 @@ export default function ImenikPage() {
     fetchStudents();
   }, [classId]);
 
+  const handleRandomStudent = () => {
+    if (students.length === 0) return;
+    const randomIndex = Math.floor(Math.random() * students.length);
+    const randomStudent = students[randomIndex];
+    router.push(`/razredi/${classId}/imenik/${randomStudent.id}`);
+  };
+
   return (
     <div className="max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl text-gray-800">Učenici u razredu</h2>
-        <button className="flex items-center gap-2 bg-[#2c5282] hover:bg-[#1a365d] text-white px-4 py-2 text-sm transition-colors">
+        <button 
+          onClick={handleRandomStudent}
+          className="flex items-center gap-2 bg-[#2c5282] hover:bg-[#1a365d] text-white px-4 py-2 text-sm transition-colors"
+        >
           <Shuffle size={16} />
           Slučajan odabir
         </button>
