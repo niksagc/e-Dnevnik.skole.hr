@@ -36,6 +36,7 @@ export default function ImenikPage() {
 
   useEffect(() => {
     const fetchStudentsAndParents = async () => {
+      if (!user) return;
       try {
         // Fetch students
         const studentsQuery = query(collection(db, 'students'), where('class_id', '==', classId), orderBy('name'));
@@ -51,7 +52,7 @@ export default function ImenikPage() {
 
         // Fetch class info
         const classDoc = await getDoc(doc(db, 'classes', classId));
-        if (classDoc.exists() && user) {
+        if (classDoc.exists()) {
           const classData = classDoc.data();
           if (classData.head_teacher_id === user.id || classData.head_teacher === user.email) {
             setIsHeadTeacher(true);
@@ -69,7 +70,7 @@ export default function ImenikPage() {
         setLoading(false);
       }
     };
-    if (user) fetchStudentsAndParents();
+    fetchStudentsAndParents();
   }, [classId, user]);
 
   const handleAddAbsence = async (e: React.FormEvent) => {

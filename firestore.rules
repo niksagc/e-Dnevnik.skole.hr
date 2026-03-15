@@ -136,5 +136,12 @@ service cloud.firestore {
       allow update: if (isAdmin() || isTeacher()) && isValidLektira(request.resource.data);
       allow delete: if isAdmin() || isTeacher();
     }
+
+    match /subject_teachers/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || isTeacher();
+      allow delete: if isAdmin() || isTeacher();
+    }
   }
 }
