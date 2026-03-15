@@ -82,6 +82,46 @@
         "status": { "type": "string", "enum": ["unjustified", "justified", "pending"] }
       },
       "required": ["student_id", "date", "hours"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System or user notification",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Target user ID" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["message", "event", "update", "grade"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "message", "type", "read", "createdAt"]
+    },
+    "PisanaZadaca": {
+      "title": "PisanaZadaca",
+      "description": "Scheduled written task/exam",
+      "type": "object",
+      "properties": {
+        "class_id": { "type": "string" },
+        "subject_id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "title": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["class_id", "subject_id", "date", "title"]
+    },
+    "Lektira": {
+      "title": "Lektira",
+      "description": "Required reading record",
+      "type": "object",
+      "properties": {
+        "student_id": { "type": "string" },
+        "book_title": { "type": "string" },
+        "author": { "type": "string" },
+        "date_read": { "type": "string", "format": "date" },
+        "grade": { "type": "integer" }
+      },
+      "required": ["student_id", "book_title", "author"]
     }
   },
   "firestore": {
@@ -91,6 +131,9 @@
     "classes": { "schema": "Class", "description": "Collection of classes" },
     "subjects": { "schema": "Subject", "description": "Collection of subjects" },
     "grades": { "schema": "Grade", "description": "Collection of grades" },
-    "absences": { "schema": "Absence", "description": "Collection of absences" }
+    "absences": { "schema": "Absence", "description": "Collection of absences" },
+    "notifications": { "schema": "Notification", "description": "Collection of notifications" },
+    "pisanih_zadaca": { "schema": "PisanaZadaca", "description": "Collection of written tasks" },
+    "lektira": { "schema": "Lektira", "description": "Collection of reading records" }
   }
 }

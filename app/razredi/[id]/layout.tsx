@@ -18,6 +18,10 @@ export default function RazredLayout({
   const router = useRouter();
   const schoolId = params.id as string;
 
+  useEffect(() => {
+    localStorage.setItem('currentSchoolId', schoolId);
+  }, [schoolId]);
+
   const handleLogout = async () => {
     await signOut(auth);
     router.push('/');

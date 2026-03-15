@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { db, auth, handleFirestoreError } from '@/lib/firebase';
-import { collection, query, getDocs, getDoc, doc, addDoc, deleteDoc, updateDoc, orderBy, where, writeBatch } from 'firebase/firestore';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { collection, query, getDocs, getDoc, doc, addDoc, deleteDoc, updateDoc, orderBy, where, writeBatch, setDoc } from 'firebase/firestore';
+import { ArrowLeft, Plus, Trash2, Edit2 } from 'lucide-react';
 import { useSearchParams, useParams } from 'next/navigation';
-import { onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
+import { onAuthStateChanged, createUserWithEmailAndPassword, signOut, getAuth } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import firebaseConfig from '@/firebase-applet-config.json';
 
 enum OperationType {
   CREATE = 'create',
@@ -44,10 +46,10 @@ function AdministracijaContent() {
   const [newFullName, setNewFullName] = useState('');
 
   // New student form state
-  const [newStudentName, setNewStudentName] = useState('');
   const [newStudentProgram, setNewStudentProgram] = useState('');
   const [newStudentClassId, setNewStudentClassId] = useState('');
   const [newStudentParentEmail, setNewStudentParentEmail] = useState('');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   // New class form state
   const [newClassName, setNewClassName] = useState('');
@@ -70,6 +72,7 @@ function AdministracijaContent() {
   const [newAcademicYearName, setNewAcademicYearName] = useState('');
   const [selectedClassIdForSubjects, setSelectedClassIdForSubjects] = useState('');
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [editingClass, setEditingClass] = useState<any>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
@@ -171,20 +174,26 @@ function AdministracijaContent() {
     'Prijenos učenika u viši razred',
   ];
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
       const q = query(collection(db, 'users'), orderBy('role'));
       const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       setUsers(data);
+      
+      const names: Record<string, string> = {};
+      data.forEach((u: any) => {
+        if (u.full_name) names[u.id] = u.full_name;
+      });
+      setUserNames(names);
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'users');
     }
     setLoading(false);
-  };
+  }, []);
 
-  const fetchStudents = async () => {
+  const fetchStudents = useCallback(async () => {
     setLoading(true);
     try {
       const q = query(collection(db, 'students'), where('school_id', '==', schoolId), orderBy('name'));
@@ -207,9 +216,9 @@ function AdministracijaContent() {
       handleFirestoreError(error, OperationType.LIST, 'students');
     }
     setLoading(false);
-  };
+  }, [schoolId]);
 
-  const fetchClasses = async () => {
+  const fetchClasses = useCallback(async () => {
     setLoading(true);
     try {
       const q = query(collection(db, 'classes'), where('school_id', '==', schoolId), orderBy('name'));
@@ -220,7 +229,7 @@ function AdministracijaContent() {
       handleFirestoreError(error, OperationType.LIST, 'classes');
     }
     setLoading(false);
-  };
+  }, [schoolId]);
 
   useEffect(() => {
     const init = async () => {
@@ -229,15 +238,14 @@ function AdministracijaContent() {
       } else if (activeTab === 'Administracija učenika') {
         fetchStudents();
         fetchClasses();
-      } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred' || activeTab === 'Dodijeli predmete razredu') {
+        fetchUsers();
+      } else if (activeTab === 'Razredni odjeli i grupe' || activeTab === 'Prijenos učenika u viši razred' || activeTab === 'Dodijeli predmete razredu' || activeTab === 'Dodijeli nastavnicima predmete') {
         fetchClasses();
-        if (activeTab === 'Dodijeli predmete razredu') {
-          fetchUsers(); // To get teachers
-        }
+        fetchUsers();
       }
     };
     init();
-  }, [activeTab]);
+  }, [activeTab, schoolId, fetchUsers, fetchStudents, fetchClasses]); // Added dependencies
 
   const hashPassword = async (password: string) => {
     const msgBuffer = new TextEncoder().encode(password);
@@ -252,17 +260,33 @@ function AdministracijaContent() {
     
     setLoading(true);
     try {
-      // Create user in Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(auth, newEmail, newPassword);
+      // Check if user already exists in our local state/Firestore first to avoid unnecessary Auth calls
+      const existingUser = users.find(u => u.email.toLowerCase() === newEmail.toLowerCase());
+      if (existingUser) {
+        alert('Korisnik s ovom e-mail adresom već postoji u sustavu.');
+        setLoading(false);
+        return;
+      }
+
+      // Use a secondary Firebase app instance to create the user
+      // This prevents the primary app from signing out the admin
+      const secondaryApp = getApps().find(app => app.name === 'Secondary') || initializeApp(firebaseConfig, 'Secondary');
+      const secondaryAuth = getAuth(secondaryApp);
+
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPassword);
       
-      // Add metadata to Firestore
+      // Sign out the new user from the secondary app immediately
+      await signOut(secondaryAuth);
+      
+      // Add metadata to Firestore using the primary app (where admin is still logged in)
       await setDoc(doc(db, 'users', userCredential.user.uid), {
         email: newEmail,
         role: newRole,
+        full_name: newFullName,
         createdAt: new Date().toISOString()
       });
 
-      const newUser = { id: userCredential.user.uid, email: newEmail, role: newRole };
+      const newUser = { id: userCredential.user.uid, email: newEmail, role: newRole, full_name: newFullName };
       setUsers([...users, newUser]);
       
         // Save full name to Firestore if needed later
@@ -275,7 +299,26 @@ function AdministracijaContent() {
       alert('Korisnik uspješno stvoren.');
     } catch (error: any) {
       console.error('Error creating user:', error);
-      alert('Greška pri stvaranju korisnika: ' + error.message);
+      if (error.code === 'auth/email-already-in-use') {
+        alert('Ova e-mail adresa je već u upotrebi. Korisnik vjerojatno već ima račun.');
+      } else {
+        alert('Greška pri stvaranju korisnika: ' + error.message);
+      }
+    }
+    setLoading(false);
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    if (!window.confirm('Jeste li sigurni da želite obrisati ovog korisnika?')) return;
+    
+    setLoading(true);
+    try {
+      await deleteDoc(doc(db, 'users', id));
+      setUsers(users.filter(u => u.id !== id));
+      alert('Korisnik uspješno obrisan.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${id}`);
+      alert('Greška pri brisanju korisnika.');
     }
     setLoading(false);
   };
@@ -297,14 +340,12 @@ function AdministracijaContent() {
     try {
       await updateDoc(doc(db, 'users', editingUser.id), {
         email: newEmail,
-        role: newRole
+        role: newRole,
+        full_name: newFullName
       });
       
-      if (newFullName) {
-        setUserNames(prev => ({ ...prev, [editingUser.id]: newFullName }));
-      }
-
-      setUsers(users.map(u => u.id === editingUser.id ? { ...u, email: newEmail, role: newRole } : u));
+      setUsers(users.map(u => u.id === editingUser.id ? { ...u, email: newEmail, role: newRole, full_name: newFullName } : u));
+      setUserNames(prev => ({ ...prev, [editingUser.id]: newFullName }));
       
       setEditingUser(null);
       setNewEmail('');
@@ -320,26 +361,47 @@ function AdministracijaContent() {
 
   const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudentName || !newStudentClassId) return;
+    if (selectedUserIds.length === 0 || !newStudentClassId) return;
     
     setLoading(true);
     try {
-      const studentData = { 
-        name: newStudentName, 
-        program: newStudentProgram, 
-        class_id: newStudentClassId,
-        parent_email: newStudentParentEmail
-      };
-      const docRef = await addDoc(collection(db, 'students'), studentData);
+      const batch = writeBatch(db);
+      const newStudentsData: any[] = [];
+
+      for (const userId of selectedUserIds) {
+        const userObj = users.find(u => u.id === userId);
+        if (!userObj) continue;
+
+        const studentData = { 
+          name: userObj.full_name || userObj.email, 
+          program: newStudentProgram, 
+          class_id: newStudentClassId,
+          parent_email: newStudentParentEmail,
+          user_id: userId,
+          school_id: schoolId
+        };
+        
+        const docRef = doc(collection(db, 'students'));
+        batch.set(docRef, studentData);
+        newStudentsData.push({ id: docRef.id, ...studentData });
+      }
+
+      await batch.commit();
 
       // Fetch class name for UI
       const classDoc = await getDoc(doc(db, 'classes', newStudentClassId));
       const className = classDoc.exists() ? classDoc.data().name : '-';
 
-      setStudents([...students, { id: docRef.id, ...studentData, classes: { name: className } }]);
-      setNewStudentName('');
+      const studentsWithClassName = newStudentsData.map(s => ({
+        ...s,
+        classes: { name: className }
+      }));
+
+      setStudents([...students, ...studentsWithClassName]);
+      setSelectedUserIds([]);
       setNewStudentProgram('');
       setNewStudentParentEmail('');
+      alert('Učenici uspješno dodani.');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'students');
       alert('Greška pri dodavanju učenika.');
@@ -388,6 +450,44 @@ function AdministracijaContent() {
       alert('Greška pri dodavanju razreda.');
     }
     setLoading(false);
+  };
+
+  const handleUpdateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClass || !newClassName) return;
+    
+    setLoading(true);
+    try {
+      const classData = { 
+        name: newClassName, 
+        program: newClassProgram, 
+        head_teacher: newClassHeadTeacher,
+        deputy_head_teacher: newClassDeputyHeadTeacher,
+        year: newClassYear
+      };
+      await updateDoc(doc(db, 'classes', editingClass.id), classData);
+
+      setClasses(classes.map(c => c.id === editingClass.id ? { ...c, ...classData } : c));
+      setEditingClass(null);
+      setNewClassName('');
+      setNewClassProgram('');
+      setNewClassHeadTeacher('');
+      setNewClassDeputyHeadTeacher('');
+      setNewClassYear('1. razred srednje škole');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `classes/${editingClass.id}`);
+      alert('Greška pri ažuriranju razreda.');
+    }
+    setLoading(false);
+  };
+
+  const handleEditClass = (c: any) => {
+    setEditingClass(c);
+    setNewClassName(c.name);
+    setNewClassProgram(c.program || '');
+    setNewClassHeadTeacher(c.head_teacher || '');
+    setNewClassDeputyHeadTeacher(c.deputy_head_teacher || '');
+    setNewClassYear(c.year || '1. razred srednje škole');
   };
 
   const handleDeleteClass = async (id: string) => {
@@ -783,57 +883,82 @@ function AdministracijaContent() {
         </div>
 
         <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
-          <h3 className="text-lg font-bold mb-4">Dodaj novog učenika</h3>
-          <form onSubmit={handleAddStudent} className="flex gap-4 items-end">
-            <div className="flex-1">
-              <label className="block text-sm text-gray-600 mb-1">Ime i prezime</label>
-              <input 
-                type="text" 
-                value={newStudentName}
-                onChange={(e) => setNewStudentName(e.target.value)}
-                className="w-full border border-gray-300 p-2" 
-                required 
-              />
+          <h3 className="text-lg font-bold mb-4">Dodaj učenike u razred</h3>
+          <form onSubmit={handleAddStudent} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Odaberi učenike (iz popisa korisnika)</label>
+                <div className="border border-gray-300 rounded p-2 max-h-40 overflow-y-auto bg-gray-50">
+                  {users.filter(u => u.role === 'student' && !students.some(s => s.user_id === u.id)).length === 0 ? (
+                    <div className="text-sm text-gray-500 p-2 italic">Nema dostupnih učenika za dodavanje.</div>
+                  ) : (
+                    users.filter(u => u.role === 'student' && !students.some(s => s.user_id === u.id)).map(u => (
+                      <label key={u.id} className="flex items-center gap-2 p-1 hover:bg-gray-100 cursor-pointer text-sm">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedUserIds.includes(u.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedUserIds([...selectedUserIds, u.id]);
+                            } else {
+                              setSelectedUserIds(selectedUserIds.filter(id => id !== u.id));
+                            }
+                          }}
+                        />
+                        <span>{userNames[u.id] || u.email}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-gray-500">
+                  Odabrano: {selectedUserIds.length} učenika
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Razred</label>
+                  <select 
+                    value={newStudentClassId}
+                    onChange={(e) => setNewStudentClassId(e.target.value)}
+                    className="w-full border border-gray-300 p-2 bg-white"
+                    required
+                  >
+                    <option value="">Odaberi razred</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Program (zajednički za sve odabrane)</label>
+                  <input 
+                    type="text" 
+                    value={newStudentProgram}
+                    onChange={(e) => setNewStudentProgram(e.target.value)}
+                    className="w-full border border-gray-300 p-2" 
+                    placeholder="npr. Opća gimnazija"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">E-mail roditelja (opcionalno)</label>
+                  <input 
+                    type="email" 
+                    value={newStudentParentEmail}
+                    onChange={(e) => setNewStudentParentEmail(e.target.value)}
+                    className="w-full border border-gray-300 p-2" 
+                  />
+                </div>
+              </div>
             </div>
-            <div className="flex-1">
-              <label className="block text-sm text-gray-600 mb-1">Program</label>
-              <input 
-                type="text" 
-                value={newStudentProgram}
-                onChange={(e) => setNewStudentProgram(e.target.value)}
-                className="w-full border border-gray-300 p-2" 
-              />
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm text-gray-600 mb-1">E-mail roditelja</label>
-              <input 
-                type="email" 
-                value={newStudentParentEmail}
-                onChange={(e) => setNewStudentParentEmail(e.target.value)}
-                className="w-full border border-gray-300 p-2" 
-              />
-            </div>
-            <div className="w-48">
-              <label className="block text-sm text-gray-600 mb-1">Razred</label>
-              <select 
-                value={newStudentClassId}
-                onChange={(e) => setNewStudentClassId(e.target.value)}
-                className="w-full border border-gray-300 p-2 bg-white"
-                required
+            <div className="flex justify-end">
+              <button 
+                type="submit" 
+                disabled={loading || selectedUserIds.length === 0}
+                className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-8 py-2 flex items-center gap-2 disabled:opacity-50"
               >
-                <option value="">Odaberi razred</option>
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+                <Plus size={18} /> Dodaj odabrane učenike ({selectedUserIds.length})
+              </button>
             </div>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 disabled:opacity-50"
-            >
-              <Plus size={18} /> Dodaj
-            </button>
           </form>
         </div>
 
@@ -878,8 +1003,8 @@ function AdministracijaContent() {
         </div>
 
         <div className="bg-white p-6 border border-gray-200 shadow-sm mb-8">
-          <h3 className="text-lg font-bold mb-4">Dodaj novi razred</h3>
-          <form onSubmit={handleAddClass} className="grid grid-cols-2 gap-4">
+          <h3 className="text-lg font-bold mb-4">{editingClass ? 'Uredi razred' : 'Dodaj novi razred'}</h3>
+          <form onSubmit={editingClass ? handleUpdateClass : handleAddClass} className="grid grid-cols-2 gap-4">
             <div className="w-full">
               <label className="block text-sm text-gray-600 mb-1">Naziv</label>
               <input 
@@ -946,20 +1071,40 @@ function AdministracijaContent() {
                 <option value="Turističko-hotelijerski komercijalist">Turističko-hotelijerski komercijalist</option>
               </select>
             </div>
-            <button 
-              type="submit"
-              disabled={loading}
-              className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 disabled:opacity-50 col-span-2 justify-center"
-            >
-              <Plus size={18} /> Dodaj
-            </button>
+            <div className="col-span-2 flex gap-2">
+              <button 
+                type="submit"
+                disabled={loading}
+                className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-6 py-2 flex items-center gap-2 disabled:opacity-50 flex-1 justify-center"
+              >
+                {editingClass ? 'Spremi promjene' : <><Plus size={18} /> Dodaj</>}
+              </button>
+              {editingClass && (
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setEditingClass(null);
+                    setNewClassName('');
+                    setNewClassProgram('');
+                    setNewClassHeadTeacher('');
+                    setNewClassDeputyHeadTeacher('');
+                    setNewClassYear('1. razred srednje škole');
+                  }}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-2"
+                >
+                  Odustani
+                </button>
+              )}
+            </div>
           </form>
         </div>
 
-        <div className="bg-white border border-gray-200 shadow-sm">
-          <div className="grid grid-cols-4 gap-4 p-4 bg-gray-50 border-b border-gray-200 font-bold text-sm text-gray-700">
+        <div className="bg-white border border-gray-200 shadow-sm overflow-x-auto">
+          <div className="grid grid-cols-5 gap-4 p-4 bg-gray-50 border-b border-gray-200 font-bold text-sm text-gray-700 min-w-[800px]">
             <div>Naziv</div>
-            <div className="col-span-2">Razrednik</div>
+            <div>Razrednik</div>
+            <div>Zamjenik</div>
+            <div>Godina</div>
             <div className="text-right">Akcije</div>
           </div>
           {loading && classes.length === 0 ? (
@@ -970,10 +1115,19 @@ function AdministracijaContent() {
                 const isDeputyHeadTeacher = c.deputy_head_teacher === user?.id;
                 const rowColor = isHeadTeacher ? 'bg-green-50' : (isDeputyHeadTeacher ? 'bg-orange-50' : '');
                 return (
-                  <div key={c.id} className={`grid grid-cols-4 gap-4 p-4 border-b border-gray-100 items-center ${rowColor}`}>
+                  <div key={c.id} className={`grid grid-cols-5 gap-4 p-4 border-b border-gray-100 items-center min-w-[800px] ${rowColor}`}>
                     <div className="font-medium">{c.name}</div>
-                    <div className="col-span-2">{c.head_teacher || '-'}</div>
-                    <div className="text-right">
+                    <div className="text-sm">{userNames[c.head_teacher] || c.head_teacher || '-'}</div>
+                    <div className="text-sm">{userNames[c.deputy_head_teacher] || c.deputy_head_teacher || '-'}</div>
+                    <div className="text-sm">{c.year || '-'}</div>
+                    <div className="text-right flex justify-end gap-2">
+                      <button 
+                        onClick={() => handleEditClass(c)}
+                        className="text-blue-600 hover:text-blue-800 p-2"
+                        title="Uredi razred"
+                      >
+                        <Edit2 size={18} />
+                      </button>
                       <button 
                         onClick={() => handleDeleteClass(c.id)}
                         className="text-red-500 hover:text-red-700 p-2"
@@ -1178,7 +1332,7 @@ function AdministracijaContent() {
                 required
               >
                 <option value="">-- Odaberi nastavnika --</option>
-                {users.filter(u => u.role === 'teacher').map(t => (
+                {users.filter(u => u.role === 'teacher' || u.role === 'admin').map(t => (
                   <option key={t.id} value={t.id}>{userNames[t.id] || t.email}</option>
                 ))}
               </select>

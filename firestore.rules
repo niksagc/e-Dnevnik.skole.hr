@@ -5,37 +5,136 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isAdmin() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isAuthenticated() && 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         request.auth.token.email == "nikoladuric025@gmail.com");
     }
+
+    function isTeacher() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    function isStudent() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'student';
+    }
+
     function isHeadTeacher(classId) {
-      return isAuthenticated() && get(/databases/$(database)/documents/classes/$(classId)).data.head_teacher == request.auth.uid;
+      return isAuthenticated() && exists(/databases/$(database)/documents/classes/$(classId)) && get(/databases/$(database)/documents/classes/$(classId)).data.head_teacher == request.auth.uid;
     }
+
     function isDeputyHeadTeacher(classId) {
-      return isAuthenticated() && get(/databases/$(database)/documents/classes/$(classId)).data.deputy_head_teacher == request.auth.uid;
+      return isAuthenticated() && exists(/databases/$(database)/documents/classes/$(classId)) && get(/databases/$(database)/documents/classes/$(classId)).data.deputy_head_teacher == request.auth.uid;
     }
+
     function canEditClass(classId) {
       return isAdmin() || isHeadTeacher(classId) || isDeputyHeadTeacher(classId);
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role']) &&
+             data.email is string &&
+             data.role in ['admin', 'teacher', 'student', 'parent'];
+    }
+
+    function isValidGrade(data) {
+      return data.keys().hasAll(['student_id', 'subject_id', 'grade', 'date_created']) &&
+             data.grade is int && data.grade >= 1 && data.grade <= 5;
+    }
+
+    function isValidPisanaZadaca(data) {
+      return data.keys().hasAll(['class_id', 'subject_id', 'date', 'title']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.date is string;
+    }
+    
+    function isValidLektira(data) {
+      return data.keys().hasAll(['student_id', 'book_title', 'author']) &&
+             data.book_title is string && data.book_title.size() > 0 && data.book_title.size() < 100 &&
+             data.author is string && data.author.size() > 0 && data.author.size() < 100;
     }
 
     // Rules
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin();
+      allow create: if (isAdmin() || (request.auth.uid == userId && request.resource.data.role != 'admin')) && isValidUser(request.resource.data);
+      allow update: if (isAdmin() || (request.auth.uid == userId && request.resource.data.role == resource.data.role)) && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
     }
+    
     match /schools/{schoolId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
+    
     match /classes/{classId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin();
       allow update: if canEditClass(classId);
       allow delete: if isAdmin();
     }
+    
+    match /students/{studentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || isHeadTeacher(resource.data.class_id);
+      allow delete: if isAdmin();
+    }
+    
+    match /subjects/{subjectId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
+    match /class_subjects/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+    
     match /dnevnik_weeks/{weekId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin(); // Needs refinement based on teacher subjects
+      allow write: if isAdmin() || isTeacher(); 
+    }
+    
+    match /absences/{absenceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || isHeadTeacher(resource.data.class_id);
+      allow delete: if isAdmin();
+    }
+    
+    match /grades/{gradeId} {
+      allow read: if isAuthenticated();
+      allow create: if (isAdmin() || isTeacher()) && isValidGrade(request.resource.data);
+      allow update: if (isAdmin() || isTeacher()) && isValidGrade(request.resource.data);
+      allow delete: if isAdmin() || isTeacher();
+    }
+    
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    match /pisanih_zadaca/{id} {
+      allow read: if isAuthenticated();
+      allow create: if (isAdmin() || isTeacher()) && isValidPisanaZadaca(request.resource.data);
+      allow update: if (isAdmin() || isTeacher()) && isValidPisanaZadaca(request.resource.data);
+      allow delete: if isAdmin() || isTeacher();
+    }
+    
+    match /lektira/{id} {
+      allow read: if isAuthenticated();
+      allow create: if (isAdmin() || isTeacher()) && isValidLektira(request.resource.data);
+      allow update: if (isAdmin() || isTeacher()) && isValidLektira(request.resource.data);
+      allow delete: if isAdmin() || isTeacher();
     }
   }
 }

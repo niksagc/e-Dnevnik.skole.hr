@@ -15,22 +15,40 @@ export default function RazrediPage() {
   useEffect(() => {
     const fetchClasses = async () => {
       const schoolId = localStorage.getItem('currentSchoolId');
+      const storedUser = localStorage.getItem('currentUser');
+      const user = storedUser ? JSON.parse(storedUser) : null;
       
+      if (!schoolId) {
+        setLoading(false);
+        return;
+      }
+
       try {
         const classesCollection = collection(db, 'classes');
         let classesQuery;
         
-        if (schoolId) {
+        // If admin, show all classes in school. If teacher, show classes they teach/head.
+        if (user?.role === 'admin') {
           classesQuery = query(classesCollection, where('school_id', '==', schoolId), orderBy('name'));
+        } else if (user) {
+          // Assuming classes have head_teacher_id or similar field
+          classesQuery = query(classesCollection, where('school_id', '==', schoolId));
         } else {
-          classesQuery = query(classesCollection, orderBy('name'));
+          classesQuery = query(classesCollection, where('school_id', '==', schoolId), orderBy('name'));
         }
 
         const classesSnapshot = await getDocs(classesQuery);
-        const classesList = classesSnapshot.docs.map(doc => ({
+        let classesList = classesSnapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
+
+        if (user?.role !== 'admin' && user) {
+          classesList = classesList.filter(cls => 
+            cls.head_teacher_id === user.id || cls.deputy_head_teacher_id === user.id
+          );
+        }
+
         setClasses(classesList);
       } catch (error) {
         handleFirestoreError(error, OperationType.LIST, 'classes');

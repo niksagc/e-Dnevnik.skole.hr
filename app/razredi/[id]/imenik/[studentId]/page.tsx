@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { db, handleFirestoreError, OperationType } from '@/lib/firebase';
+import { db, auth, handleFirestoreError, OperationType } from '@/lib/firebase';
 import { collection, getDocs, query, where, doc, getDoc, updateDoc, addDoc, deleteDoc, orderBy } from 'firebase/firestore';
-import { ArrowLeft, ArrowRight, Shuffle, Trash2 } from 'lucide-react';
-import { subjects, evaluationElements } from '@/lib/mock-data';
+import { onAuthStateChanged } from 'firebase/auth';
+import { ArrowLeft, ArrowRight, Shuffle, Trash2, ChevronRight } from 'lucide-react';
+import { evaluationElements } from '@/lib/mock-data';
 
 export default function StudentDetailsPage() {
   const params = useParams();
@@ -13,10 +14,16 @@ export default function StudentDetailsPage() {
   const classId = params.id as string;
   const studentId = params.studentId as string;
   
+  const [user, setUser] = useState<any>(null);
+  const [classData, setClassData] = useState<any>(null);
   const [student, setStudent] = useState<any>(null);
   const [allStudents, setAllStudents] = useState<any[]>([]);
   const [grades, setGrades] = useState<any[]>([]);
+  const [classSubjects, setClassSubjects] = useState<any[]>([]);
+  const [subjectsMap, setSubjectsMap] = useState<Record<string, any>>({});
+  const [teachersMap, setTeachersMap] = useState<Record<string, any>>({});
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showGradeModal, setShowGradeModal] = useState(false);
   const [selectedElement, setSelectedElement] = useState<string>('');
   
@@ -39,29 +46,91 @@ export default function StudentDetailsPage() {
   const [examGrade, setExamGrade] = useState<number | null>(null);
   const [examNote, setExamNote] = useState('');
   const [examDate, setExamDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser) {
+        const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+        if (userDoc.exists()) {
+          setUser({ id: userDoc.id, ...userDoc.data() });
+        }
+      } else {
+        router.push('/');
+      }
+    });
+    return () => unsubscribe();
+  }, [router]);
 
   useEffect(() => {
-    const fetchStudentData = async () => {
+    const fetchData = async () => {
+      if (!user) return;
+      setLoading(true);
       try {
+        // Fetch class data
+        const classDoc = await getDoc(doc(db, 'classes', classId));
+        if (classDoc.exists()) {
+          setClassData({ id: classDoc.id, ...classDoc.data() });
+        }
+
+        // Fetch student data
         const studentDoc = await getDoc(doc(db, 'students', studentId));
         if (studentDoc.exists()) {
           setStudent({ id: studentDoc.id, ...studentDoc.data() });
         }
 
-        const allStudentsQuery = query(collection(db, 'students'), where('class_id', '==', classId));
+        // Fetch all students for navigation
+        const allStudentsQuery = query(collection(db, 'students'), where('class_id', '==', classId), orderBy('name'));
         const allStudentsSnapshot = await getDocs(allStudentsQuery);
-        setAllStudents(allStudentsSnapshot.docs.map(doc => ({ id: doc.id })));
+        const studentsList = allStudentsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllStudents(studentsList);
 
+        // Fetch grades
         const gradesQuery = query(collection(db, 'grades'), where('student_id', '==', studentId));
         const gradesSnapshot = await getDocs(gradesQuery);
         setGrades(gradesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        // Fetch class subjects
+        const csQuery = query(collection(db, 'class_subjects'), where('class_id', '==', classId));
+        const csSnapshot = await getDocs(csQuery);
+        let csData = csSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+
+        // Filter for regular teachers
+        const isHead = classDoc.data()?.head_teacher === user.id;
+        const isDeputy = classDoc.data()?.deputy_head_teacher === user.id;
+        const isAdmin = user.role === 'admin';
+
+        if (!isAdmin && !isHead && !isDeputy) {
+          csData = csData.filter(cs => cs.teacher_id === user.id);
+        }
+        setClassSubjects(csData);
+
+        // Fetch subject and teacher names
+        const sIds = Array.from(new Set(csData.map(cs => cs.subject_id)));
+        const tIds = Array.from(new Set(csData.map(cs => cs.teacher_id)));
+
+        const sMap: Record<string, any> = {};
+        for (const sId of sIds) {
+          const sDoc = await getDoc(doc(db, 'subjects', sId as string));
+          if (sDoc.exists()) sMap[sId as string] = sDoc.data();
+        }
+        setSubjectsMap(sMap);
+
+        const tMap: Record<string, any> = {};
+        for (const tId of tIds) {
+          const tDoc = await getDoc(doc(db, 'users', tId as string));
+          if (tDoc.exists()) tMap[tId as string] = tDoc.data();
+        }
+        setTeachersMap(tMap);
+
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, `students/${studentId}`);
+      } finally {
+        setLoading(false);
       }
     };
     
-    fetchStudentData();
-  }, [studentId, classId]);
+    fetchData();
+  }, [studentId, classId, user]);
 
   const handleRandomStudent = () => {
     if (allStudents.length <= 1) return;
@@ -240,6 +309,21 @@ export default function StudentDetailsPage() {
     return index >= 0 ? index : 0; // fallback to first column if outside
   };
 
+  const studentIndex = allStudents.findIndex(s => s.id === studentId);
+  const ordinalNumber = studentIndex !== -1 ? studentIndex + 1 : '';
+
+  const handleNextStudent = () => {
+    if (allStudents.length <= 1) return;
+    const nextIndex = (studentIndex + 1) % allStudents.length;
+    router.push(`/razredi/${classId}/imenik/${allStudents[nextIndex].id}`);
+  };
+
+  const handlePrevStudent = () => {
+    if (allStudents.length <= 1) return;
+    const prevIndex = (studentIndex - 1 + allStudents.length) % allStudents.length;
+    router.push(`/razredi/${classId}/imenik/${allStudents[prevIndex].id}`);
+  };
+
   if (!student) return <div className="p-8 text-center text-gray-500">Učitavanje podataka o učeniku...</div>;
 
   return (
@@ -251,21 +335,31 @@ export default function StudentDetailsPage() {
         </div>
         
         <div>
-          <h2 className="text-2xl text-gray-800 mb-1">{student.name}</h2>
+          <h2 className="text-2xl text-gray-800 mb-1">{ordinalNumber}. {student.name}</h2>
           <p className="text-sm text-gray-500 mb-4">{student.program}</p>
           
           <div className="flex items-center gap-2">
-            <button className="bg-gray-400 text-white p-2 hover:bg-gray-500"><ArrowLeft size={16} /></button>
-            <button className="bg-[#2c5282] text-white p-2 hover:bg-[#1a365d]"><ArrowRight size={16} /></button>
             <button 
-              onClick={handleRandomStudent}
-              className="flex items-center gap-2 bg-[#2c5282] hover:bg-[#1a365d] text-white px-4 py-2 text-sm"
+              onClick={handlePrevStudent}
+              className="bg-gray-300 text-white p-2 hover:bg-gray-400 rounded shadow-sm"
             >
-              <Shuffle size={16} />
-              Slučajan odabir
+              <ArrowLeft size={20} />
             </button>
             <button 
-              className="bg-[#2c5282] hover:bg-[#1a365d] text-white px-4 py-2 text-sm ml-4"
+              onClick={handleNextStudent}
+              className="bg-[#1a365d] text-white p-2 hover:bg-[#2c5282] rounded shadow-sm"
+            >
+              <ArrowRight size={20} />
+            </button>
+            <button 
+              onClick={handleRandomStudent}
+              className="bg-[#1a365d] hover:bg-[#2c5282] text-white p-2 rounded shadow-sm"
+              title="Slučajan odabir"
+            >
+              <Shuffle size={20} />
+            </button>
+            <button 
+              className="bg-[#1a365d] hover:bg-[#2c5282] text-white px-4 py-2 text-sm rounded shadow-sm ml-4"
               onClick={() => setSelectedSubject(null)}
             >
               Odaberi predmet
@@ -276,18 +370,48 @@ export default function StudentDetailsPage() {
 
       {/* Subject Selection or Grading View */}
       {!selectedSubject ? (
-        <div className="border border-gray-200 bg-white max-w-md">
-          {subjects.map((subject, idx) => (
+        <div className="bg-white border border-gray-200 shadow-sm rounded-sm overflow-hidden">
+          {Object.entries(classSubjects.reduce((acc, cs) => {
+            const sId = cs.subject_id;
+            if (!acc[sId]) {
+              acc[sId] = {
+                id: sId,
+                name: subjectsMap[sId]?.name || 'Učitavanje...',
+                teachers: []
+              };
+            }
+            const teacher = teachersMap[cs.teacher_id];
+            if (teacher) {
+              const shortName = `${teacher.full_name?.split(' ').map((n: string, i: number, arr: string[]) => i === arr.length - 1 ? n : n[0] + '.').join(' ')}`;
+              if (!acc[sId].teachers.includes(shortName)) {
+                acc[sId].teachers.push(shortName);
+              }
+            }
+            return acc;
+          }, {} as Record<string, { id: string, name: string, teachers: string[] }>)).map(([sId, data]: [string, any], idx) => (
             <div 
-              key={subject}
-              onClick={() => setSelectedSubject(subject)}
-              className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-gray-50 text-sm ${
-                idx === 1 ? 'bg-red-50 border-red-200 text-red-800' : 'text-gray-700'
-              }`}
+              key={sId}
+              onClick={() => setSelectedSubject(data.name)}
+              className="flex justify-between items-center p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
             >
-              {subject}
+              <div className="font-bold text-gray-800 text-sm">
+                {data.name}
+              </div>
+              <div className="text-xs text-gray-600 font-medium">
+                {data.teachers.join(', ')}
+              </div>
             </div>
           ))}
+          {classSubjects.length === 0 && !loading && (
+            <div className="p-8 text-center text-gray-400 italic text-sm">
+              Nema dodijeljenih predmeta za ovaj razred.
+            </div>
+          )}
+          {loading && (
+            <div className="p-8 text-center text-gray-400 italic text-sm">
+              Učitavanje predmeta...
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white border border-gray-200">
